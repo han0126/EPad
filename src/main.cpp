@@ -1,15 +1,15 @@
 #include <Arduino.h>
 
 #include "epd_driver.h"
-#include "price_label.h"
+#include "calendar_renderer.h"
 
 namespace {
 
-bool showPriceLabelDemo() {
+bool showCalendarDemo() {
   if (!epd::initialize()) return false;
 
-  Serial.println("Sending 400x300 four-color retail price label...");
-  sendPriceLabelFrame();
+  Serial.println("Sending 400x300 four-color static calendar...");
+  sendCalendarFrame();
   if (!epd::refresh()) return false;
 
   epd::sleep();
@@ -22,11 +22,11 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println();
-  Serial.println("JD79668 4.2-inch 400x300 four-color price-label demo");
+  Serial.println("JD79668 4.2-inch 400x300 four-color static calendar demo");
 
   epd::beginPins();
 
-  if (showPriceLabelDemo()) {
+  if (showCalendarDemo()) {
     Serial.println("Done. The panel is now sleeping.");
   } else {
     Serial.println("Demo stopped because the panel did not become ready.");
