@@ -1,9 +1,12 @@
-#include "epd_driver.h"
+#include "jd79668_driver.h"
 
 #include <Arduino.h>
 
+#include "board_config.h"
+
 namespace {
 
+// 软件 SPI，高位先发；沿用原驱动的电平顺序和延时。
 void spiWriteByte(uint8_t value) {
   for (uint8_t bit = 0; bit < 8; ++bit) {
     digitalWrite(EpdPin::SCK, LOW);
@@ -40,6 +43,7 @@ void writeCommandData(uint8_t command, const uint8_t* data, size_t length) {
 
 bool waitUntilReady(const char* operation) {
   const uint32_t startedAt = millis();
+  // 此屏 BUSY 为低表示忙，等待时让出 CPU。
   while (digitalRead(EpdPin::BUSY) == LOW) {
     if (millis() - startedAt >= BUSY_TIMEOUT_MS) {
       Serial.printf("ERROR: BUSY timeout during %s. Check BUSY, power and GND.\n",
@@ -68,6 +72,7 @@ void setFullWindow() {
 }
 
 bool initPanel() {
+  // 以下寄存器序列为当前屏幕已使用的配置，整理代码时不改动。
   writeCommand(0x4D);
   writeData(0x78);
 
@@ -97,7 +102,7 @@ bool initPanel() {
   writeCommand(0xE9);
   writeData(0x01);
 
-  writeCommand(0x04);  // Power on.
+  writeCommand(0x04);  // 开启屏幕电源。
   if (!waitUntilReady("power on")) return false;
   setFullWindow();
   return true;
@@ -105,7 +110,7 @@ bool initPanel() {
 
 }  // namespace
 
-namespace epd {
+namespace jd79668 {
 
 void beginPins() {
   pinMode(EpdPin::BUSY, INPUT_PULLUP);
@@ -131,8 +136,7 @@ void sendFrame(PixelProvider pixelProvider) {
 
   writeCommand(0x10);
 
-  // Four 2-bit pixels are packed into each byte:
-  // black=00, white=01, yellow=10, red=11.
+  // 每字节四个像素，高位在左：黑=00、白=01、黄=10、红=11。
   for (uint16_t y = 0; y < EPD_HEIGHT; ++y) {
     for (uint16_t x = 0; x < EPD_WIDTH; x += 4) {
       const uint8_t p1 = static_cast<uint8_t>(pixelProvider(x, y));
@@ -167,4 +171,4 @@ void sleep() {
   writeData(0xA5);
 }
 
-}  // namespace epd
+}  // namespace jd79668

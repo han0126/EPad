@@ -1,21 +1,12 @@
 #pragma once
 
-#include <Arduino.h>
+#include <stdint.h>
 
-namespace EpdPin {
-constexpr uint8_t BUSY = 13;
-constexpr uint8_t CS = 10;
-constexpr uint8_t RST = 14;
-constexpr uint8_t DC = 9;
-constexpr uint8_t SCK = 12;
-constexpr uint8_t SDA = 11;  // DIN on the display adapter
-}  // namespace EpdPin
-
+// 屏幕物理尺寸，画布和驱动共用。
 constexpr uint16_t EPD_WIDTH = 400;
 constexpr uint16_t EPD_HEIGHT = 300;
-constexpr uint32_t BUSY_TIMEOUT_MS = 180000;
-constexpr uint8_t SPI_HALF_PERIOD_US = 1;
 
+// 数值直接对应 JD79668 的两位像素编码，不是 RGB565 颜色。
 enum class Color4 : uint8_t {
   Black = 0,
   White = 1,
@@ -24,7 +15,6 @@ enum class Color4 : uint8_t {
 };
 
 using PixelProvider = Color4 (*)(uint16_t x, uint16_t y);
-using TextLength = uint16_t;
 
 static_assert(EPD_WIDTH % 4 == 0, "The packed 2-bit frame requires a width divisible by 4");
 static_assert(sizeof(Color4) == 1, "Color4 must remain one byte wide");
