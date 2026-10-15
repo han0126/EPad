@@ -12,6 +12,13 @@ void EpdCanvas::clear(Color4 color) {
   std::memset(frame_, value * 0x55, sizeof(frame_));
 }
 
+bool EpdCanvas::loadPackedFrame(const uint8_t* data, size_t length) {
+  if (data == nullptr || length != sizeof(frame_)) return false;
+  setRotation(0);
+  std::memcpy(frame_, data, sizeof(frame_));
+  return true;
+}
+
 void EpdCanvas::drawPixel(int16_t x, int16_t y, uint16_t color) {
   if (x < 0 || y < 0 || x >= width() || y >= height() || color > 3) {
     return;

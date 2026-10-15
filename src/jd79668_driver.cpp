@@ -161,14 +161,15 @@ bool refresh() {
   return waitUntilReady("display refresh");
 }
 
-void sleep() {
-  if (!waitUntilReady("before sleep")) return;
+bool sleep() {
+  if (!waitUntilReady("before sleep")) return false;
   writeCommand(0x02);
   writeData(0x00);
-  if (!waitUntilReady("power off")) return;
+  if (!waitUntilReady("power off")) return false;
   delay(100);
   writeCommand(0x07);
   writeData(0xA5);
+  return true;
 }
 
 }  // namespace jd79668

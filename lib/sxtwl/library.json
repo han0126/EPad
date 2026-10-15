@@ -1,0 +1,13 @@
+{
+  "name": "sxtwl",
+  "version": "2.0.7-jd79668.1",
+  "description": "ShouXing calendar core, upstream commit 7598b0601a76cfdaa9266257b1b5690720c1e2ce, with embedded memory fixes",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yuangu/sxtwl_cpp.git"
+  },
+  "license": "BSD-3-Clause",
+  "build": {
+    "srcFilter": ["+<*.cpp>", "-<XL.cpp>"]
+  }
+}

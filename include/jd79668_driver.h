@@ -16,7 +16,7 @@ void sendFrame(PixelProvider pixelProvider);
 // 触发全屏刷新并等待完成。
 bool refresh();
 
-// 刷新后关闭电源并进入屏幕深度休眠。
-void sleep();
+// 刷新后关闭电源并发送深度休眠命令；BUSY 超时返回 false。
+bool sleep();
 
 }  // namespace jd79668
