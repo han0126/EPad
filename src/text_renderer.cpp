@@ -14,8 +14,8 @@ void selectFont(text::Font font) {
     case text::Font::Date17:
       fonts.setFont(u8g2_font_fub17_tn);
       break;
-    case text::Font::Title25:
-      fonts.setFont(u8g2_font_fub25_tn);
+    case text::Font::Title20:
+      fonts.setFont(u8g2_font_fub20_tn);
       break;
     case text::Font::Chinese16:
     default:
@@ -35,7 +35,7 @@ int16_t textWidth(const char* text, Font font) {
 }
 
 int16_t drawText(Adafruit_GFX& canvas, const char* text, int16_t x, int16_t top,
-                 Color4 color, Font font) {
+                 Color4 color, Font font, uint8_t letterSpacing) {
   if (text == nullptr || *text == '\0') return 0;
 
   fonts.begin(canvas);
@@ -44,7 +44,21 @@ int16_t drawText(Adafruit_GFX& canvas, const char* text, int16_t x, int16_t top,
   fonts.setFontDirection(0);
   fonts.setForegroundColor(static_cast<uint16_t>(color));
   // U8g2 使用基线坐标，统一在此将顶部坐标转换为基线。
-  return fonts.drawUTF8(x, top + fonts.getFontAscent(), text);
+  const int16_t baseline = top + fonts.getFontAscent();
+  if (letterSpacing == 0) return fonts.drawUTF8(x, baseline, text);
+
+  // 使用字库的 UTF-8 解码器逐字绘制，只在两个完整字符之间加间距。
+  fonts.setCursor(x, baseline);
+  const int16_t startX = x;
+  bool first = true;
+  for (const char* cursor = text; *cursor != '\0'; ++cursor) {
+    const uint16_t glyph = fonts.utf8_next(static_cast<uint8_t>(*cursor));
+    if (glyph >= 0xFFFE) continue;
+    if (!first) x += letterSpacing;
+    x += fonts.drawGlyph(x, baseline, glyph);
+    first = false;
+  }
+  return x - startX;
 }
 
 void drawCenteredText(Adafruit_GFX& canvas, const char* text, int16_t left,

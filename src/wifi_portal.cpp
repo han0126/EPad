@@ -1,6 +1,7 @@
 #include "wifi_portal.h"
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <DNSServer.h>
 #include <WebServer.h>
 #include <WiFi.h>
@@ -8,6 +9,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
+#include <cstdlib>
 
 #include "display_service.h"
 #include "clock_service.h"
@@ -16,10 +19,15 @@
 #include "network_settings.h"
 #include "network_time_config.h"
 #include "power_service.h"
+#include "weather_settings.h"
+#include "weather_icons.h"
+#include "weather_service.h"
 
 // PlatformIO 将独立 HTML 文件直接嵌入固件，无需上传文件系统。
 extern const uint8_t WIFI_SETUP_HTML[] asm("_binary_web_wifi_setup_html_start");
 extern const uint8_t IMAGE_TOOLS_JS[] asm("_binary_web_image_tools_js_start");
+extern const uint8_t WEATHER_ICONS_JSON[] asm("_binary_web_weather_icons_json_start");
+extern const uint8_t WEATHER_PREVIEW_JS[] asm("_binary_web_weather_preview_js_start");
 
 namespace {
 
@@ -111,6 +119,18 @@ void sendImageTools() {
                 reinterpret_cast<const char*>(IMAGE_TOOLS_JS));
 }
 
+void sendWeatherIcons() {
+  server.sendHeader("Cache-Control", "no-store");
+  server.send_P(200, "application/json; charset=utf-8",
+                reinterpret_cast<const char*>(WEATHER_ICONS_JSON));
+}
+
+void sendWeatherPreviewScript() {
+  server.sendHeader("Cache-Control", "no-store");
+  server.send_P(200, "application/javascript; charset=utf-8",
+                reinterpret_cast<const char*>(WEATHER_PREVIEW_JS));
+}
+
 const char* calendarState(display_service::State state) {
   switch (state) {
     case display_service::State::Queued: return "queued";
@@ -141,7 +161,9 @@ const char* imageState(const display_service::Status& display) {
     if (display.state == display_service::State::Error) return "error";
   }
   if (image_transfer::error() != image_transfer::Error::None) return "upload_error";
+  if (display_mode::storageFailed()) return "error";
   if (display.state == display_service::State::Ready && display.image) return "ready";
+  if (display_mode::hasRetainedImage()) return "retained";
   return "awaiting_upload";
 }
 
@@ -180,36 +202,60 @@ void sendStatus() {
   const clock_service::TimeSource source = clock_service::timeSource();
   const char* sourceName = !valid ? "none" :
       (source == clock_service::TimeSource::Network ? "network" : "retained");
-  const bool calendarMode = display_mode::isCalendar();
-  char json[1024];
-  std::snprintf(json, sizeof(json),
-      "{\"state\":\"%s\",\"valid\":%s,\"time\":\"%s\",\"date\":\"%s\","
-      "\"weekday\":%d,\"lastSync\":\"%s\",\"saved\":%s,\"connected\":%s,"
-      "\"remaining\":%lu,\"token\":\"%s\","
-      "\"calendar\":{\"state\":\"%s\",\"error\":\"%s\",\"date\":\"%s\","
-      "\"target\":\"%s\",\"preview\":%s,\"rows\":%u},"
-      "\"power\":{\"timerWake\":%s,\"nextWake\":\"%s\",\"timeSource\":\"%s\","
-      "\"imageSleepPending\":%s,\"sleepIn\":%lu},"
-      "\"display\":{\"mode\":\"%s\",\"imageState\":\"%s\",\"imageError\":\"%s\","
-      "\"uploadEnabled\":%s}}",
-      stateName(), valid ? "true" : "false", timeText, dateText,
-      valid ? current.tm_wday : 0, lastSync,
-      hasSavedNetwork ? "true" : "false",
-      WiFi.status() == WL_CONNECTED ? "true" : "false",
-      static_cast<unsigned long>((remainingMs() + 999) / 1000), sessionToken,
-      calendarState(display.state), calendarError(display.error), displayedDate,
-      requestedDate, display.preview ? "true" : "false", static_cast<unsigned>(display.rows),
-      power.timerWake ? "true" : "false", nextWake, sourceName,
-      power.imageSleepPending ? "true" : "false",
-      static_cast<unsigned long>(power.sleepInSeconds),
-      calendarMode ? "calendar" : "image", imageState(display),
-      image_transfer::error() != image_transfer::Error::None
-          ? image_transfer::errorName() :
-          ((display.imageRequest || display.error == display_service::Error::TaskStartFailed)
-              ? calendarError(display.error) : ""),
-      display.error == display_service::Error::TaskStartFailed || power.imageSleepPending
-          ? "false" : "true");
-  sendJson(200, json);
+  // 使用结构化序列化，保证服务端来源链接中的特殊字符也能安全返回。
+  DynamicJsonDocument json(4096);
+  json["state"] = stateName();
+  json["valid"] = valid;
+  json["time"] = timeText;
+  json["date"] = dateText;
+  json["weekday"] = valid ? current.tm_wday : 0;
+  json["lastSync"] = lastSync;
+  json["saved"] = hasSavedNetwork;
+  json["connected"] = WiFi.status() == WL_CONNECTED;
+  json["remaining"] = (remainingMs() + 999) / 1000;
+  json["token"] = sessionToken;
+  JsonObject calendarJson = json.createNestedObject("calendar");
+  calendarJson["state"] = calendarState(display.state);
+  calendarJson["error"] = calendarError(display.error);
+  calendarJson["date"] = displayedDate;
+  calendarJson["target"] = requestedDate;
+  calendarJson["preview"] = display.preview;
+  calendarJson["rows"] = display.rows;
+  JsonObject powerJson = json.createNestedObject("power");
+  powerJson["timerWake"] = power.timerWake;
+  powerJson["nextWake"] = nextWake;
+  powerJson["timeSource"] = sourceName;
+  powerJson["imageSleepPending"] = power.imageSleepPending;
+  powerJson["sleepIn"] = power.sleepInSeconds;
+  JsonObject displayJson = json.createNestedObject("display");
+  displayJson["mode"] = display_mode::isCalendar() ? "calendar" : "image";
+  displayJson["imageState"] = imageState(display);
+  displayJson["imageError"] = display_mode::storageFailed() ? "mode_save_failed" :
+      (image_transfer::error() != image_transfer::Error::None ? image_transfer::errorName() :
+        ((display.imageRequest || display.error == display_service::Error::TaskStartFailed)
+          ? calendarError(display.error) : ""));
+  displayJson["uploadEnabled"] = display.error != display_service::Error::TaskStartFailed && !power.imageSleepPending;
+  const weather_service::Status weather = weather_service::status();
+  JsonObject weatherJson = json.createNestedObject("weather");
+  weatherJson["preview"] = display.weatherPreview;
+  weatherJson["code"] = display.weather.code;
+  weatherJson["tempMax"] = display.weather.maxTemperature;
+  weatherJson["tempMin"] = display.weather.minTemperature;
+  weatherJson["temperaturesValid"] = display.weather.temperaturesValid;
+  weatherJson["known"] = weather_icons::isKnown(display.weather.code);
+  weatherJson["source"] = weather_display::sourceName(display.weather.source);
+  weatherJson["state"] = weather_service::stateName(weather.state);
+  weatherJson["error"] = weather_service::errorName(weather.error);
+  weatherJson["httpStatus"] = weather.httpStatus;
+  weatherJson["attemptDay"] = weather.attemptDay;
+  weatherJson["dataDay"] = weather.dataDay;
+  JsonArray links = weatherJson.createNestedArray("attributions");
+  for (size_t i = 0; i < weather_service::attributionCount(); ++i) links.add(weather_service::attribution(i));
+  if (json.overflowed()) { sendJson(503, "{\"error\":\"status_memory\"}"); return; }
+  String body;
+  if (!body.reserve(measureJson(json) + 1)) { sendJson(503, "{\"error\":\"status_memory\"}"); return; }
+  serializeJson(json, body);
+  sendJson(200, body.c_str());
 }
 
 void startRequest(const network_settings::Credentials& credentials, bool save) {
@@ -225,7 +271,7 @@ void startRequest(const network_settings::Credentials& credentials, bool save) {
 
 void connectNetwork() {
   if (!authorized() || !calendarSelected()) return;
-  if (clock_service::isSyncing()) {
+  if (clock_service::isSyncing() || weather_service::isBusy()) {
     sendJson(409, "{\"error\":\"busy\"}");
     return;
   }
@@ -241,7 +287,7 @@ void connectNetwork() {
 
 void resyncNetwork() {
   if (!authorized() || !calendarSelected()) return;
-  if (clock_service::isSyncing()) {
+  if (clock_service::isSyncing() || weather_service::isBusy()) {
     sendJson(409, "{\"error\":\"busy\"}");
     return;
   }
@@ -253,8 +299,137 @@ void resyncNetwork() {
   startRequest(credentials, false);
 }
 
+void sendWeatherSettings(const weather_settings::Settings& settings, bool saved) {
+  // 域名已限制为安全 ASCII；绝不将密钥写入响应或串口。
+  char json[384];
+  std::snprintf(json, sizeof(json),
+      "{\"saved\":%s,\"enabled\":%s,\"apiHost\":\"%s\",\"keySaved\":%s,"
+      "\"latitude100\":%d,\"longitude100\":%d}",
+      saved ? "true" : "false", settings.enabled ? "true" : "false",
+      settings.apiHost.length() != 0 ? settings.apiHost.c_str() : "",
+      settings.apiKey.length() != 0 ? "true" : "false",
+      static_cast<int>(settings.latitude100), static_cast<int>(settings.longitude100));
+  sendJson(200, json);
+}
+
+void readWeatherSettings() {
+  if (!authorized() || !calendarSelected()) return;
+  weather_settings::Settings settings;
+  const bool saved = weather_settings::load(settings);
+  sendWeatherSettings(settings, saved);
+}
+
+void saveWeatherSettings() {
+  if (!authorized() || !calendarSelected()) return;
+  if (closeRequested || remainingMs() == 0) {
+    sendJson(409, "{\"error\":\"portal_closing\"}");
+    return;
+  }
+  if (clock_service::isSyncing() || weather_service::isBusy() || display_service::isBusy() || image_transfer::isReceiving()) {
+    sendJson(409, "{\"error\":\"mode_busy\"}");
+    return;
+  }
+  const String enabled = server.arg("enabled");
+  if (enabled != "0" && enabled != "1") {
+    sendJson(400, "{\"error\":\"weather_settings_invalid\"}");
+    return;
+  }
+  weather_settings::Settings settings;
+  weather_settings::load(settings);
+  const int16_t previousLatitude = settings.latitude100;
+  const int16_t previousLongitude = settings.longitude100;
+  const bool previousEnabled = settings.enabled;
+  settings.enabled = enabled == "1";
+  settings.apiHost = server.arg("apiHost");
+  settings.apiHost.trim();
+  settings.apiHost.toLowerCase();
+  // 留空保留原密钥，不向页面回填密钥，也不在编译时写入源码。
+  const String key = server.arg("apiKey");
+  if (key.length() != 0) settings.apiKey = key;
+  if ((settings.enabled || settings.apiHost.length() != 0) &&
+      !weather_settings::isValidHost(settings.apiHost)) {
+    sendJson(400, "{\"error\":\"weather_host_invalid\"}");
+    return;
+  }
+  if ((settings.enabled || settings.apiKey.length() != 0) &&
+      !weather_settings::isValidKey(settings.apiKey)) {
+    sendJson(400, "{\"error\":\"weather_key_invalid\"}");
+    return;
+  }
+  if (!weather_settings::parseCoordinate(server.arg("latitude"), 9000, settings.latitude100) ||
+      !weather_settings::parseCoordinate(server.arg("longitude"), 18000, settings.longitude100)) {
+    sendJson(400, "{\"error\":\"weather_location_invalid\"}");
+    return;
+  }
+  if (!weather_settings::save(settings)) {
+    Serial.println("[weather] ERROR: settings save failed.");
+    sendJson(503, "{\"error\":\"weather_save_failed\"}");
+    return;
+  }
+  Serial.println("[weather] Settings saved; daily request limit remains unchanged.");
+  weather_service::settingsChanged();
+  if (settings.latitude100 != previousLatitude || settings.longitude100 != previousLongitude ||
+      settings.enabled != previousEnabled) {
+    display_service::requestWeatherRedraw();
+  }
+  sendWeatherSettings(settings, true);
+}
+
+bool parseWeatherNumber(const String& value, long minimum, long maximum, long& result) {
+  if (value.length() == 0 || value.length() > 6 ||
+      std::strlen(value.c_str()) != value.length()) return false;
+  errno = 0;
+  char* end = nullptr;
+  const long parsed = std::strtol(value.c_str(), &end, 10);
+  if (end == value.c_str() || *end != '\0' || errno == ERANGE ||
+      parsed < minimum || parsed > maximum) return false;
+  result = parsed;
+  return true;
+}
+
+bool weatherPreviewAllowed() {
+  if (!authorized() || !calendarSelected()) return false;
+  if (closeRequested || remainingMs() == 0) {
+    sendJson(409, "{\"error\":\"portal_closing\"}");
+    return false;
+  }
+  if (clock_service::isSyncing() || weather_service::isBusy() || display_service::isBusy() || image_transfer::isReceiving()) {
+    sendJson(409, "{\"error\":\"mode_busy\"}");
+    return false;
+  }
+  return true;
+}
+
+void previewWeather() {
+  if (!weatherPreviewAllowed()) return;
+  long code = 0, maximum = 0, minimum = 0;
+  if (!parseWeatherNumber(server.arg("code"), 0, 65535, code) ||
+      !parseWeatherNumber(server.arg("tempMax"), -99, 99, maximum) ||
+      !parseWeatherNumber(server.arg("tempMin"), -99, 99, minimum) || minimum > maximum) {
+    sendJson(400, "{\"error\":\"weather_preview_invalid\"}");
+    return;
+  }
+  const weather_display::Data weather = {static_cast<uint16_t>(code),
+      static_cast<int16_t>(maximum), static_cast<int16_t>(minimum), true, weather_display::Source::Preview};
+  if (!display_service::requestWeatherPreview(weather)) {
+    sendJson(409, "{\"error\":\"weather_preview_unavailable\"}");
+    return;
+  }
+  sendJson(202, "{\"accepted\":true}");
+}
+
+void clearWeatherPreview() {
+  if (!weatherPreviewAllowed()) return;
+  if (!display_service::clearWeatherPreview()) {
+    sendJson(409, "{\"error\":\"weather_preview_unavailable\"}");
+    return;
+  }
+  sendJson(202, "{\"accepted\":true}");
+}
+
 void previewCalendar() {
   if (!authorized() || !calendarSelected()) return;
+  if (weather_service::isBusy()) { sendJson(409, "{\"error\":\"weather_busy\"}"); return; }
   unsigned year = 0, month = 0, day = 0;
   char extra = 0;
   const String value = server.arg("date");
@@ -280,6 +455,7 @@ void previewCalendar() {
 
 void restoreCurrentCalendar() {
   if (!authorized() || !calendarSelected()) return;
+  if (weather_service::isBusy()) { sendJson(409, "{\"error\":\"weather_busy\"}"); return; }
   if (!display_service::requestCurrentDate()) {
     sendJson(409, "{\"error\":\"display_unavailable\"}");
     return;
@@ -302,7 +478,7 @@ void selectDisplayMode() {
     sendJson(400, "{\"error\":\"invalid_mode\"}");
     return;
   }
-  if (clock_service::isSyncing() || display_service::isBusy() || image_transfer::isReceiving()) {
+  if (clock_service::isSyncing() || weather_service::isBusy() || display_service::isBusy() || image_transfer::isReceiving()) {
     sendJson(409, "{\"error\":\"mode_busy\"}");
     return;
   }
@@ -310,7 +486,8 @@ void selectDisplayMode() {
       ? display_mode::Mode::Calendar : display_mode::Mode::Image;
   const bool changed = display_mode::selected() != mode;
   if (!display_mode::select(mode)) {
-    sendJson(409, "{\"error\":\"display_unavailable\"}");
+    sendJson(409, display_mode::storageFailed()
+        ? "{\"error\":\"mode_save_failed\"}" : "{\"error\":\"display_unavailable\"}");
     return;
   }
   // 主动切换模式开启对应的限时操作窗口，不靠轮询无限续期。
@@ -318,6 +495,21 @@ void selectDisplayMode() {
     openedAt = millis();
     imageOpenedAt = millis();
     if (display_mode::isCalendar()) imageWorkPending = false;
+  }
+  // 切回日历时复用已校时连接；只有保留时钟时仍需联网校准并获取天气。
+  if (changed && display_mode::isCalendar()) {
+    if (clock_service::syncStatus() == clock_service::SyncStatus::Success &&
+        clock_service::timeSource() == clock_service::TimeSource::Network &&
+        WiFi.status() == WL_CONNECTED) {
+      weather_service::onTimeSynchronized();
+    } else {
+      network_settings::Credentials credentials;
+      if (network_settings::load(credentials)) {
+        clock_service::beginNetworkTime(credentials.ssid.c_str(),
+                                        credentials.password.c_str(), true);
+        previousStatus = clock_service::SyncStatus::Idle;
+      }
+    }
   }
   successWindow = display_mode::isCalendar() &&
       clock_service::syncStatus() == clock_service::SyncStatus::Success && !storageFailed;
@@ -363,7 +555,7 @@ void receiveImage() {
     } else if (closeRequested || remainingMs() == 0) {
       uploadHttpStatus = 409;
       uploadError = "portal_closing";
-    } else if (display_service::isBusy() || clock_service::isSyncing()) {
+    } else if (display_service::isBusy() || clock_service::isSyncing() || weather_service::isBusy()) {
       uploadHttpStatus = 409;
       uploadError = "image_busy";
     } else if (server.clientContentLength() == static_cast<int>(image_transfer::PACKET_BYTES)) {
@@ -421,15 +613,22 @@ void registerRoutes() {
   server.collectHeaders(headers, 2);
   server.on("/", HTTP_GET, sendPage);
   server.on("/image-tools.js", HTTP_GET, sendImageTools);
+  server.on("/weather-icons.json", HTTP_GET, sendWeatherIcons);
+  server.on("/weather-preview.js", HTTP_GET, sendWeatherPreviewScript);
   server.on("/api/status", HTTP_GET, sendStatus);
   server.on("/api/wifi", HTTP_POST, connectNetwork);
   server.on("/api/resync", HTTP_POST, resyncNetwork);
+  server.on("/api/weather/settings", HTTP_GET, readWeatherSettings);
+  server.on("/api/weather/settings", HTTP_POST, saveWeatherSettings);
+  server.on("/api/weather/preview", HTTP_POST, previewWeather);
+  server.on("/api/weather/preview/clear", HTTP_POST, clearWeatherPreview);
   server.on("/api/display/mode", HTTP_POST, selectDisplayMode);
   server.on("/api/image", HTTP_POST, displayUploadedImage, receiveImage);
   server.on("/api/calendar/preview", HTTP_POST, previewCalendar);
   server.on("/api/calendar/today", HTTP_POST, restoreCurrentCalendar);
   server.on("/api/close", HTTP_POST, []() {
     if (!authorized()) return;
+    if (weather_service::isBusy()) { sendJson(409, "{\"error\":\"weather_busy\"}"); return; }
     if (!display_mode::isCalendar() && display_service::isBusy()) {
       sendUploadError(409, "image_busy");
       return;
@@ -500,7 +699,7 @@ void processImageResult() {
     return;
   }
   imageOpenedAt = millis();
-  Serial.println("[image] Refresh failed; configuration remains available for retry.");
+  Serial.println("[image] Refresh or mode save incomplete; configuration remains available for retry.");
 }
 
 }  // namespace
@@ -511,7 +710,7 @@ bool begin() {
   if (active) return true;
   WiFi.persistent(false);
   WiFi.setAutoReconnect(false);
-  if (!WiFi.mode(WIFI_AP_STA) ||
+  if (!WiFi.mode(display_mode::isCalendar() ? WIFI_AP_STA : WIFI_AP) ||
       !WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1),
                           IPAddress(255, 255, 255, 0)) ||
       !WiFi.softAP(NetworkTimeConfig::PORTAL_SSID,
@@ -540,7 +739,7 @@ bool begin() {
   network_settings::Credentials credentials;
   hasSavedNetwork = network_settings::load(credentials);
   previousStatus = clock_service::SyncStatus::Idle;
-  if (hasSavedNetwork) {
+  if (hasSavedNetwork && display_mode::isCalendar()) {
     clock_service::beginNetworkTime(credentials.ssid.c_str(),
                                     credentials.password.c_str(), true);
   }
@@ -552,7 +751,7 @@ void handle() {
   processImageResult();
   const bool imageBusy = !display_mode::isCalendar() && display_service::isBusy();
   // 为“关闭配网”的 HTTP 响应留出短暂发送时间，避免先断开无线。
-  if (!imageBusy && ((closeRequested && millis() - closeRequestedAt >= 300) ||
+  if (!imageBusy && !weather_service::isBusy() && ((closeRequested && millis() - closeRequestedAt >= 300) ||
       remainingMs() == 0)) {
     closePortal();
     return;
@@ -568,7 +767,7 @@ bool isActive() {
 }
 
 bool close() {
-  if (display_service::isBusy() || image_transfer::isReceiving()) return false;
+  if (display_service::isBusy() || image_transfer::isReceiving() || weather_service::isBusy()) return false;
   if (active) closePortal();
   return true;
 }

@@ -10,6 +10,8 @@
 #include "display_mode.h"
 #include "epd_canvas.h"
 #include "jd79668_driver.h"
+#include "weather_settings.h"
+#include "weather_service.h"
 
 namespace {
 
@@ -17,6 +19,8 @@ struct Request {
   calendar::Date date;
   bool preview;
   const uint8_t* imageFrame;
+  weather_display::Data weather;
+  bool weatherPreview;
 };
 
 EpdCanvas canvas;
@@ -24,10 +28,17 @@ QueueHandle_t requests = nullptr;
 portMUX_TYPE statusLock = portMUX_INITIALIZER_UNLOCKED;
 display_service::Status displayStatus = {
     display_service::State::WaitingForTime, display_service::Error::None,
-    {}, {}, false, 0, false, false};
+    {}, {}, false, 0, false, false, weather_display::unavailable(), false};
 bool previewMode = false;
 calendar::Date lastAttempt = {};
 uint32_t lastClockPoll = 0;
+weather_display::Data selectedWeather = weather_display::placeholder();
+bool weatherPreviewMode = false;
+bool weatherRedrawPending = false;
+
+weather_display::Data weatherFor(const calendar::Date& date) {
+  return weatherPreviewMode ? selectedWeather : weather_service::dataForDate(date);
+}
 
 Color4 readPixel(uint16_t x, uint16_t y) {
   return canvas.pixel(x, y);
@@ -58,7 +69,9 @@ void displayWorker(void*) {
       error = display_service::Error::CalendarFailed;
     } else {
       rows = (month.firstWeekday + month.dayCount + 6) / 7;
-      calendar::drawMonth(canvas, month);
+      weather_settings::Settings weather;
+      weather_settings::load(weather);
+      calendar::drawMonth(canvas, month, weather_settings::regionName(weather), request.weather);
       Serial.printf("[calendar] Rendering %04u-%02u-%02u, rows=%u, lunar=%s %s%s\n",
                     static_cast<unsigned>(request.date.year),
                     static_cast<unsigned>(request.date.month),
@@ -115,6 +128,8 @@ bool enqueue(const Request& request) {
   displayStatus.requestedDate = request.date;
   displayStatus.preview = request.preview;
   displayStatus.imageRequest = request.imageFrame != nullptr;
+  displayStatus.weather = request.weather;
+  displayStatus.weatherPreview = request.weatherPreview;
   portEXIT_CRITICAL(&statusLock);
   if (xQueueSend(requests, &request, 0) != pdTRUE) {
     portENTER_CRITICAL(&statusLock);
@@ -123,7 +138,28 @@ bool enqueue(const Request& request) {
     return false;
   }
   previewMode = request.preview;
-  if (request.imageFrame == nullptr) lastAttempt = request.date;
+  if (request.imageFrame == nullptr) {
+    lastAttempt = request.date;
+    weatherRedrawPending = false;
+  }
+  return true;
+}
+
+bool refreshWeather(const weather_display::Data& weather, bool preview) {
+  if (!display_mode::isCalendar() || !display_service::isAvailable() ||
+      display_service::isBusy()) return false;
+  const display_service::Status display = display_service::status();
+  const bool datePreview = display.preview && calendar::isValidDate(display.requestedDate);
+  calendar::Date date = {};
+  if (datePreview) {
+    date = display.requestedDate;
+  } else if (!readCurrentDate(date)) {
+    return false;
+  }
+  const weather_display::Data target = preview ? weather : weather_service::dataForDate(date);
+  if (!enqueue({date, datePreview, nullptr, target, preview})) return false;
+  selectedWeather = weather;
+  weatherPreviewMode = preview;
   return true;
 }
 
@@ -157,16 +193,22 @@ Status status() {
   return snapshot;
 }
 
+bool isAvailable() {
+  return requests != nullptr;
+}
+
 bool isBusy() {
   const State state = status().state;
   return state == State::Queued || state == State::Drawing;
 }
 
-bool restoreRetainedFrame(const calendar::Date& date, uint8_t rows) {
+bool restoreRetainedFrame(const calendar::Date& date, uint8_t rows,
+                           const weather_display::Data& weather) {
   if (requests == nullptr || isBusy() || !calendar::isValidDate(date) ||
       rows < 4 || rows > 6) return false;
   portENTER_CRITICAL(&statusLock);
-  displayStatus = {State::Ready, Error::None, date, date, false, rows, false, false};
+  displayStatus = {State::Ready, Error::None, date, date, false, rows, false, false,
+                   weather, false};
   portEXIT_CRITICAL(&statusLock);
   previewMode = false;
   lastAttempt = date;
@@ -174,23 +216,38 @@ bool restoreRetainedFrame(const calendar::Date& date, uint8_t rows) {
 }
 
 void handle() {
-  if (!display_mode::isCalendar() || previewMode || requests == nullptr || isBusy()) return;
+  if (!display_mode::isCalendar() || requests == nullptr || isBusy() ||
+      clock_service::isSyncing() || weather_service::isBusy()) return;
+  if (weatherRedrawPending) {
+    const Status snapshot = status();
+    const bool datePreview = snapshot.preview && calendar::isValidDate(snapshot.requestedDate);
+    calendar::Date date = {};
+    if (datePreview) date = snapshot.requestedDate;
+    else if (!readCurrentDate(date)) return;
+    enqueue({date, datePreview, nullptr, weatherFor(date), weatherPreviewMode});
+    return;
+  }
+  if (previewMode) return;
   if (millis() - lastClockPoll < 1000) return;
   lastClockPoll = millis();
-  if (clock_service::isSyncing()) return;
+  if (clock_service::isSyncing() || weather_service::isBusy()) return;
   calendar::Date today = {};
-  if (!readCurrentDate(today) || calendar::sameDate(today, lastAttempt)) return;
+  if (!readCurrentDate(today)) return;
+  const weather_display::Data target = weatherFor(today);
+  const Status snapshot = status();
+  if (calendar::sameDate(today, lastAttempt) &&
+      weather_display::sameData(target, snapshot.weather)) return;
   // 同一天重复 NTP 校时不刷屏；失败也不在循环内持续刷新屏幕。
-  enqueue({today, false, nullptr});
+  enqueue({today, false, nullptr, target, weatherPreviewMode});
 }
 
 bool requestPreview(const calendar::Date& date) {
-  if (!display_mode::isCalendar() || !calendar::isValidDate(date)) return false;
-  return enqueue({date, true, nullptr});
+  if (!display_mode::isCalendar() || !calendar::isValidDate(date) || weather_service::isBusy()) return false;
+  return enqueue({date, true, nullptr, weatherFor(date), weatherPreviewMode});
 }
 
-bool requestCurrentDate() {
-  if (!display_mode::isCalendar() || isBusy() || requests == nullptr) return false;
+bool requestCurrentDate(bool forceRefresh) {
+  if (!display_mode::isCalendar() || isBusy() || requests == nullptr || weather_service::isBusy()) return false;
   previewMode = false;
   calendar::Date today = {};
   if (!readCurrentDate(today)) {
@@ -202,22 +259,39 @@ bool requestCurrentDate() {
     return true;
   }
   const Status snapshot = status();
-  if (snapshot.state == State::Ready && !snapshot.image &&
-      calendar::sameDate(today, snapshot.displayedDate)) {
+  const weather_display::Data target = weatherFor(today);
+  if (!forceRefresh && snapshot.state == State::Ready && !snapshot.image &&
+      calendar::sameDate(today, snapshot.displayedDate) && weather_display::sameData(target, snapshot.weather)) {
     portENTER_CRITICAL(&statusLock);
     displayStatus.preview = false;
     portEXIT_CRITICAL(&statusLock);
     lastAttempt = today;
     return true;
   }
-  return enqueue({today, false, nullptr});
+  return enqueue({today, false, nullptr, target, weatherPreviewMode});
+}
+
+bool requestWeatherPreview(const weather_display::Data& weather) {
+  if (!weather_display::isValidPreview(weather) || weather_service::isBusy()) return false;
+  weather_display::Data preview = weather;
+  preview.source = weather_display::Source::Preview;
+  return refreshWeather(preview, true);
+}
+
+bool clearWeatherPreview() {
+  if (weather_service::isBusy()) return false;
+  return refreshWeather(weather_display::unavailable(), false);
+}
+
+void requestWeatherRedraw() {
+  weatherRedrawPending = true;
 }
 
 bool requestImage(const uint8_t* frame, size_t length) {
   if (display_mode::isCalendar() || frame == nullptr || length != EPD_FRAME_BYTES) {
     return false;
   }
-  return enqueue({{}, false, frame});
+  return enqueue({{}, false, frame, weather_display::placeholder(), false});
 }
 
 }  // namespace display_service

@@ -33,10 +33,17 @@
     #sync-state.error { color: #b02e32; }
     .field { margin-bottom: 20px; }
     label.field-label { display: block; font-size: 14px; margin-bottom: 8px; font-weight: 600; }
-    input[type="text"], input[type="password"], input[type="date"], select { width: 100%; min-height: 46px; padding: 10px 12px; border: 1px solid #acb9b1; border-radius: 4px; background: #fff; color: #202422; font: inherit; }
+    input[type="text"], input[type="password"], input[type="date"], input[type="number"], select { width: 100%; min-height: 46px; padding: 10px 12px; border: 1px solid #acb9b1; border-radius: 4px; background: #fff; color: #202422; font: inherit; }
     input:focus-visible, button:focus-visible, select:focus-visible { outline: 3px solid #add6c0; outline-offset: 2px; }
     .image-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 20px; }
     .image-options .field { min-width: 0; margin: 0; }
+    .coordinate-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .coordinate-fields .field { min-width: 0; }
+    #weather-preview-canvas { display: block; width: 90px; height: 90px; aspect-ratio: 1; background: #fff; image-rendering: pixelated; }
+    .weather-icon-sample { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; margin: 20px 0; }
+    #weather-preview-selection { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+    .asset-credit { margin: 18px 0 0; font-size: 12px; color: #607067; }
+    .asset-credit a { color: inherit; }
     #image-file { display: block; width: 100%; min-height: 44px; font: inherit; }
     #image-preview { display: block; width: 100%; max-width: 400px; height: auto; aspect-ratio: 4 / 3; background: #fff; border: 1px solid #acb9b1; margin: 20px auto; image-rendering: pixelated; }
     #image-progress { display: block; width: 100%; height: 12px; margin: 18px 0 8px; accent-color: #176c46; }
@@ -47,8 +54,9 @@
     button { min-height: 44px; padding: 10px 16px; border: 1px solid #acb9b1; border-radius: 4px; background: #fff; color: #202422; font: 600 14px/1.5 system-ui, "Microsoft YaHei", sans-serif; cursor: pointer; }
     button.primary { background: #176c46; color: #fff; border-color: #176c46; }
     button:disabled { opacity: .5; cursor: default; }
-    #form-error, #calendar-error, #mode-error, #image-error { color: #b02e32; margin: 16px 0 0; font-size: 14px; }
-    #form-error:empty, #calendar-error:empty, #mode-error:empty, #image-error:empty { display: none; }
+    #form-error, #calendar-error, #mode-error, #image-error, #weather-error, #weather-preview-error, #weather-fetch-error { color: #b02e32; margin: 16px 0 0; font-size: 14px; }
+    #form-error:empty, #calendar-error:empty, #mode-error:empty, #image-error:empty, #weather-error:empty, #weather-preview-error:empty, #weather-fetch-error:empty { display: none; }
+    #weather-attributions a { display: block; color: inherit; overflow-wrap: anywhere; margin-top: 6px; }
     footer { padding-top: 22px; display: flex; align-items: center; gap: 12px; justify-content: space-between; flex-wrap: wrap; }
     #connection { color: #607067; font-size: 13px; margin: 0; }
     @media (max-width: 420px) { main { padding: 24px 18px 36px; } dl div { gap: 12px; } .actions button { flex: 1 1 140px; } }
@@ -104,6 +112,97 @@
         </div>
         <p id="form-error" role="alert"></p>
       </form>
+    </section>
+
+    <section id="weather-panel" aria-labelledby="weather-heading">
+      <h2 id="weather-heading">天气配置 · 和风天气</h2>
+      <dl>
+        <div><dt>配置状态</dt><dd id="weather-state" role="status">未读取</dd></div>
+        <div><dt>API KEY</dt><dd id="weather-key-state">未设置</dd></div>
+        <div><dt>获取状态</dt><dd id="weather-fetch-state" role="status">等待设备</dd></div>
+        <div><dt>HTTP 状态</dt><dd id="weather-http">—</dd></div>
+        <div><dt>上次尝试日期</dt><dd id="weather-attempt-day">尚无记录</dd></div>
+        <div><dt>上次数据日期</dt><dd id="weather-data-day">尚无记录</dd></div>
+        <div><dt>今日尝试</dt><dd id="weather-daily-state">等待校时</dd></div>
+        <div><dt>画面天气来源</dt><dd id="weather-source">等待设备</dd></div>
+      </dl>
+      <p id="weather-fetch-error" role="alert"></p>
+      <p class="asset-credit"><a href="https://www.qweather.com" target="_blank" rel="noopener noreferrer">天气服务由和风天气驱动</a></p>
+      <div id="weather-attributions" class="asset-credit"></div>
+      <form id="weather-form">
+        <div class="field">
+          <label class="check"><input id="weather-enabled" type="checkbox" disabled>启用天气</label>
+        </div>
+        <div class="field">
+          <label class="field-label" for="weather-region">地区</label>
+          <!-- 城市中心坐标来自 qwd/LocationList 的 China-City-List v202506200，取两位小数。 -->
+          <select id="weather-region" disabled>
+            <option value="3991,11641">北京</option>
+            <option value="3123,12147">上海</option>
+            <option value="3913,11719">天津</option>
+            <option value="2956,10655">重庆</option>
+            <option value="2313,11328">广州</option>
+            <option value="2255,11409">深圳</option>
+            <option value="3057,10407">成都</option>
+            <option value="3025,12021">杭州</option>
+            <option value="custom">自定义经纬度</option>
+          </select>
+        </div>
+        <div class="coordinate-fields">
+          <div class="field">
+            <label class="field-label" for="weather-latitude">纬度</label>
+            <input id="weather-latitude" type="number" min="-90" max="90" step="0.01" value="39.91" required disabled>
+          </div>
+          <div class="field">
+            <label class="field-label" for="weather-longitude">经度</label>
+            <input id="weather-longitude" type="number" min="-180" max="180" step="0.01" value="116.41" required disabled>
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="weather-host">API Host</label>
+          <input id="weather-host" type="text" maxlength="127" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="abcxyz.qweatherapi.com" disabled>
+        </div>
+        <div class="field">
+          <label class="field-label" for="weather-key">API KEY</label>
+          <input id="weather-key" type="password" maxlength="128" autocomplete="new-password" placeholder="未设置" disabled>
+        </div>
+        <div class="actions"><button id="weather-save" class="primary" type="submit" disabled>保存天气配置</button></div>
+        <p id="weather-error" role="alert"></p>
+      </form>
+    </section>
+
+    <section id="weather-preview-panel" aria-labelledby="weather-preview-heading">
+      <h2 id="weather-preview-heading">天气图标预览</h2>
+      <dl>
+        <div><dt>屏幕状态</dt><dd id="weather-preview-state" role="status">等待设备</dd></div>
+        <div><dt>画面天气代码</dt><dd id="weather-preview-screen-code">—</dd></div>
+      </dl>
+      <form id="weather-preview-form">
+        <div class="field">
+          <label class="field-label" for="weather-preview-code">天气现象</label>
+          <select id="weather-preview-code" required disabled><option value="100">100 · 晴</option></select>
+        </div>
+        <div class="weather-icon-sample">
+          <canvas id="weather-preview-canvas" width="30" height="30" aria-label="天气图标预览"></canvas>
+          <p id="weather-preview-selection">等待图标</p>
+        </div>
+        <div class="coordinate-fields">
+          <div class="field">
+            <label class="field-label" for="weather-preview-max">最高温度（℃）</label>
+            <input id="weather-preview-max" type="number" min="-99" max="99" step="1" value="28" required disabled>
+          </div>
+          <div class="field">
+            <label class="field-label" for="weather-preview-min">最低温度（℃）</label>
+            <input id="weather-preview-min" type="number" min="-99" max="99" step="1" value="18" required disabled>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="weather-preview-send" class="primary" type="submit" disabled>预览到屏幕</button>
+          <button id="weather-preview-clear" type="button" disabled>恢复实际天气</button>
+        </div>
+        <p id="weather-preview-error" role="alert"></p>
+      </form>
+      <p class="asset-credit"><a href="https://github.com/qwd/Icons" target="_blank" rel="noopener noreferrer">QWeather Icons</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></p>
     </section>
 
     <section id="calendar-panel" aria-labelledby="calendar-heading">
@@ -178,6 +277,7 @@
   </main>
 
   <script src="/image-tools.js"></script>
+  <script src="/weather-preview.js"></script>
   <script>
     const elements = Object.fromEntries(
       ['device-time', 'device-date', 'sync-state', 'last-sync', 'saved-state',
@@ -190,7 +290,12 @@
        'time-panel', 'wifi-panel', 'calendar-panel', 'image-panel', 'image-state',
        'image-form', 'image-file', 'image-fit', 'image-rotation', 'image-dither',
        'image-preview', 'image-progress', 'image-transfer-state', 'image-send',
-       'image-error', 'image-remaining', 'image-power-state']
+       'image-error', 'image-remaining', 'image-power-state',
+       'weather-panel', 'weather-form', 'weather-enabled', 'weather-region',
+       'weather-latitude', 'weather-longitude', 'weather-host', 'weather-key',
+       'weather-save', 'weather-state', 'weather-key-state', 'weather-error',
+       'weather-fetch-state', 'weather-http', 'weather-attempt-day', 'weather-data-day',
+       'weather-daily-state', 'weather-source', 'weather-fetch-error', 'weather-attributions']
         .map(id => [id, document.getElementById(id)])
     );
     const states = {
@@ -208,7 +313,17 @@
       display_unavailable: '屏幕正在刷新或显示任务不可用，请稍后重试。',
       invalid_mode: '显示模式无效，请刷新页面。',
       wrong_mode: '请先切换到日历显示。',
-      mode_busy: '正在校时或刷新屏幕，请完成后再切换。',
+      mode_busy: '正在联网或刷新屏幕，请完成后再操作。',
+      mode_save_failed: '模式保存失败，请稍后重试；保存成功前请勿断电。',
+      weather_settings_invalid: '天气配置无效，请刷新页面。',
+      weather_host_invalid: '请输入控制台中的专属 qweatherapi.com 域名，不包含 https:// 或路径。',
+      weather_key_invalid: '请输入有效的 API KEY；留空可保留已保存的密钥。',
+      weather_location_invalid: '请核对经纬度范围，最多支持两位小数。',
+      weather_save_failed: '天气配置保存失败，请稍后重试。',
+      weather_preview_invalid: '请核对天气代码及温度；最低温度不能高于最高温度。',
+      weather_preview_unavailable: '暂时无法预览，请先完成校时或显示指定日期。',
+      weather_busy: '正在获取当天天气，请完成后再操作。',
+      status_memory: '设备状态暂时无法生成，请稍后重试。',
       portal_closing: '热点正在关闭，请复位设备后重新连接。',
       image_mode_required: '请先切换到图片展示。',
       image_busy: '屏幕正在刷新，请完成后再操作。',
@@ -228,7 +343,7 @@
     };
     const calendarStates = { waiting: '等待有效时间', queued: '准备刷新', drawing: '正在刷新', ready: '已更新', error: '刷新失败' };
     const calendarErrors = { task_failed: '显示任务启动失败', calendar_failed: '历法数据生成失败', panel_failed: '屏幕未就绪或刷新超时', invalid_frame: '图片帧格式错误' };
-    const imageStates = { inactive: '未选择图片', awaiting_upload: '待上传', receiving: '正在接收', queued: '准备刷新', drawing: '正在刷新', ready: '已显示图片', upload_error: '上传失败', error: '刷新失败' };
+    const imageStates = { inactive: '未选择图片', awaiting_upload: '待上传', retained: '保留原图片', receiving: '正在接收', queued: '准备刷新', drawing: '正在刷新', ready: '已显示图片', upload_error: '上传失败', error: '刷新失败' };
     const weekdays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
     let token = '';
     let saved = false;
@@ -248,6 +363,14 @@
     let imageUploadEnabled = false;
     let waitingForImageResult = false;
     let imageSleepPending = false;
+    let weatherLoaded = false;
+    let weatherLoading = false;
+    let weatherKeySaved = false;
+    let weatherBusy = false;
+    let weatherAttributionKey = '';
+    // 预览脚本加载失败时，配网、日历和图片操作仍可使用。
+    const weatherPreview = window.WeatherPreview
+      ? new window.WeatherPreview({ request, post, refreshControls: updateControls }) : null;
 
     function updateControls() {
       const isCalendar = displayMode === 'calendar';
@@ -257,6 +380,7 @@
       elements['time-panel'].hidden = !isCalendar;
       elements['wifi-panel'].hidden = !isCalendar;
       elements['calendar-panel'].hidden = !isCalendar;
+      elements['weather-panel'].hidden = !isCalendar;
       elements['image-panel'].hidden = isCalendar;
       elements['mode-state'].textContent = imageSleepPending
         ? (closed ? '图片已显示，连接已关闭' : '图片已显示，即将深睡')
@@ -267,9 +391,19 @@
       elements.resync.disabled = blocked || !saved;
       elements.ssid.disabled = busy || posting || closed;
       elements.password.disabled = busy || posting || closed;
-      elements.close.disabled = !online || !token || posting || closed || imageSleepPending || (!isCalendar && imageBusy);
+      const weatherBlocked = blocked || calendarBusy || !weatherLoaded || weatherLoading;
+      for (const id of ['weather-enabled', 'weather-region', 'weather-latitude',
+                        'weather-longitude', 'weather-host', 'weather-key', 'weather-save']) {
+        elements[id].disabled = weatherBlocked;
+      }
+      const customRegion = elements['weather-region'].value === 'custom';
+      elements['weather-latitude'].readOnly = !customRegion;
+      elements['weather-longitude'].readOnly = !customRegion;
+      elements['weather-host'].required = elements['weather-enabled'].checked;
+      elements['weather-key'].required = elements['weather-enabled'].checked && !weatherKeySaved;
+      elements.close.disabled = !online || !token || posting || closed || weatherBusy || imageSleepPending || (!isCalendar && imageBusy);
       elements.connect.textContent = busy ? '正在处理…' : '连接并保存';
-      const displayBlocked = !online || !token || posting || closed || calendarBusy || !isCalendar;
+      const displayBlocked = blocked || calendarBusy;
       elements.preview.disabled = displayBlocked;
       elements.today.disabled = displayBlocked;
       elements['preview-date'].disabled = calendarBusy || posting || closed;
@@ -279,6 +413,12 @@
       }
       elements['image-send'].disabled = imageBlocked || !imageFrame;
       elements['image-send'].textContent = posting && !isCalendar ? '正在传输…' : '上传并显示';
+      if (weatherPreview) {
+        weatherPreview.updateControls({ online, token, busy, posting, closed, isCalendar, calendarBusy });
+      } else {
+        document.getElementById('weather-preview-panel').hidden = !isCalendar;
+        document.getElementById('weather-preview-error').textContent = '天气预览组件未加载，请刷新页面。';
+      }
     }
 
     async function request(path, options = {}) {
@@ -294,6 +434,97 @@
       }
     }
 
+    function applyWeatherSettings(data) {
+      elements['weather-enabled'].checked = data.enabled;
+      elements['weather-host'].value = data.apiHost;
+      elements['weather-key'].value = '';
+      weatherKeySaved = data.keySaved;
+      elements['weather-key'].placeholder = weatherKeySaved ? '已保存' : '未设置';
+      elements['weather-key-state'].textContent = weatherKeySaved ? '已保存' : '未设置';
+      elements['weather-latitude'].value = (data.latitude100 / 100).toFixed(2);
+      elements['weather-longitude'].value = (data.longitude100 / 100).toFixed(2);
+      const region = `${data.latitude100},${data.longitude100}`;
+      elements['weather-region'].value = Array.from(elements['weather-region'].options)
+        .some(option => option.value === region) ? region : 'custom';
+      elements['weather-state'].textContent = !data.saved ? '未保存' :
+        (data.enabled ? '已保存 · 已启用' : '已保存 · 未启用');
+      weatherLoaded = true;
+    }
+
+    async function loadWeatherSettings() {
+      if (weatherLoaded || weatherLoading || posting || closed || displayMode !== 'calendar') return;
+      const revision = actionRevision;
+      const requestToken = token;
+      weatherLoading = true;
+      updateControls();
+      try {
+        const data = await request('/api/weather/settings', {
+          headers: { 'X-Portal-Token': requestToken }
+        });
+        if (closed || posting || revision !== actionRevision || requestToken !== token || displayMode !== 'calendar') return;
+        applyWeatherSettings(data);
+        elements['weather-error'].textContent = '';
+      } catch (error) {
+        if (closed || posting || revision !== actionRevision || displayMode !== 'calendar') return;
+        elements['weather-error'].textContent = '天气配置读取失败，等待重新连接。';
+      } finally {
+        weatherLoading = false;
+        updateControls();
+      }
+    }
+
+    function updateWeatherStatus(data, deviceDate, validTime) {
+      const labels = {
+        disabled: '未启用', waiting_time: '等待有效时间', waiting_network: '等待下一次成功校时',
+        fetching: '正在获取当天天气', success: '天气已获取', cached: '使用当天缓存',
+        daily_limit: '今日已尝试，等待明日更新', error: '获取未完成，今日不再重试'
+      };
+      const messages = {
+        none: '', connection: '连接、TLS 证书校验或响应超时失败。',
+        http: '和风接口返回错误，请结合 HTTP 状态核对 Host、KEY 和接口权限。',
+        too_large: '天气响应超出设备容量限制。', encoding: '天气响应解压或校验失败。',
+        json: '天气响应格式无法解析。', forecast: '预报日期、温度或单位无效，未作为当天数据使用。',
+        attribution: '天气来源声明无效或超出设备容量，未展示该数据。',
+        memory: '天气任务内存不足。', storage: '请求记录或缓存保存异常，天气请求已受保护限制。',
+        task: '天气任务无法启动。', interrupted: '上次请求未能完整保存结果，今日不再重试。'
+      };
+      const sourceLabels = { preview: '本地手动预览', network: '和风每日预报',
+        unavailable: '暂无当天有效数据', disabled: '天气未启用', placeholder: '静态占位' };
+      const formatDay = day => {
+        if (!day) return '尚无记录';
+        const value = String(day);
+        return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
+      };
+      elements['weather-fetch-state'].textContent = labels[data.state] || '等待设备';
+      elements['weather-fetch-error'].textContent = messages[data.error] || '';
+      elements['weather-http'].textContent = data.httpStatus || '—';
+      elements['weather-attempt-day'].textContent = formatDay(data.attemptDay);
+      elements['weather-data-day'].textContent = formatDay(data.dataDay);
+      elements['weather-source'].textContent = sourceLabels[data.source] || '等待设备';
+      const today = validTime ? Number(deviceDate.split('-').join('')) : 0;
+      elements['weather-daily-state'].textContent = data.state === 'disabled' ? '未启用' :
+        (!today ? '等待校时' : (data.attemptDay === today ? '今日尝试已记录' :
+          (data.attemptDay > today ? '时钟回拨保护中' : '今日尚未尝试')));
+      const links = Array.isArray(data.attributions) ? data.attributions : [];
+      const signature = JSON.stringify(links);
+      if (signature !== weatherAttributionKey) {
+        weatherAttributionKey = signature;
+        elements['weather-attributions'].replaceChildren();
+        for (const link of links) {
+          try {
+            const url = new URL(link);
+            if (url.protocol !== 'https:') continue;
+            const anchor = document.createElement('a');
+            anchor.href = url.href;
+            anchor.textContent = link;
+            anchor.target = '_blank';
+            anchor.rel = 'noopener noreferrer';
+            elements['weather-attributions'].append(anchor);
+          } catch (error) { /* 无效链接不进入页面。 */ }
+        }
+      }
+    }
+
     async function poll() {
       if (closed || location.protocol === 'file:') return;
       if (posting) { setTimeout(poll, 1000); return; }
@@ -303,11 +534,20 @@
         // 操作前发出的旧轮询不能覆盖切换模式后的新状态。
         if (closed || posting || revision !== actionRevision) return;
         online = true;
+        if (token && token !== data.token) {
+          // 设备重启后重新读取配置，旧会话的密钥输入不带入新会话。
+          weatherLoaded = false;
+          weatherKeySaved = false;
+          elements['weather-key'].value = '';
+          if (weatherPreview) weatherPreview.resetSession();
+        }
         token = data.token;
         saved = data.saved;
         // 以设备确认的模式为准，避免请求失败后页面仍停留在另一模式。
         displayMode = data.display.mode;
-        busy = data.state === 'connecting' || data.state === 'syncing';
+        weatherBusy = data.weather.state === 'fetching';
+        busy = data.state === 'connecting' || data.state === 'syncing' || weatherBusy;
+        updateWeatherStatus(data.weather, data.date, data.valid);
         if (clearPasswordAfterSync && data.state === 'success') {
           elements.password.value = '';
           clearPasswordAfterSync = false;
@@ -333,7 +573,8 @@
         elements['image-power-state'].textContent = imageSleepPending
           ? (data.power.sleepIn ? `即将深睡（${data.power.sleepIn}秒）` : '正在关闭连接')
           : (imageBusy ? '等待刷新完成' :
-            (['error', 'upload_error'].includes(imageState) ? '等待重试' : '等待图片'));
+            (['error', 'upload_error'].includes(imageState) ? '等待重试' :
+              (imageState === 'retained' ? '原图片保留，配置结束后深睡' : '等待图片')));
         if (waitingForImageResult && imageState === 'ready') {
           waitingForImageResult = false;
           elements['image-transfer-state'].textContent = imageSleepPending
@@ -353,7 +594,10 @@
         elements['calendar-mode'].textContent = calendar.preview ? '指定日期预览' : '实际日期';
         elements['calendar-state'].textContent = calendarErrors[calendar.error] || calendarStates[calendar.state] || '等待设备';
         elements['calendar-rows'].textContent = calendar.rows ? `${calendar.rows}行` : '—';
+        if (weatherPreview) weatherPreview.updateStatus(data.weather, calendar, calendarErrors[calendar.error]);
         if (!elements['preview-date'].value && data.valid) elements['preview-date'].value = data.date;
+        await loadWeatherSettings();
+        if (weatherPreview) await weatherPreview.load();
       } catch (error) {
         if (closed || posting || revision !== actionRevision) return;
         online = false;
@@ -381,7 +625,10 @@
       posting = true;
       const isCalendar = path.startsWith('/api/calendar/');
       const isMode = path === '/api/display/mode';
-      const errorElement = isMode ? elements['mode-error'] :
+      const isWeather = path === '/api/weather/settings';
+      const isWeatherPreview = path.startsWith('/api/weather/preview');
+      const errorElement = isWeatherPreview && weatherPreview ? weatherPreview.errorElement :
+        isWeather ? elements['weather-error'] : isMode ? elements['mode-error'] :
         (isCalendar ? elements['calendar-error'] :
           (displayMode === 'image' ? elements['image-error'] : elements['form-error']));
       errorElement.textContent = '';
@@ -407,6 +654,11 @@
         } else if (isCalendar) {
           calendarBusy = true;
           elements['calendar-state'].textContent = '准备刷新';
+        } else if (isWeather) {
+          applyWeatherSettings(data);
+        } else if (isWeatherPreview) {
+          calendarBusy = true;
+          if (weatherPreview) weatherPreview.accepted();
         } else {
           busy = true;
           elements['sync-state'].textContent = '正在连接 Wi-Fi';
@@ -495,6 +747,33 @@
       post('/api/wifi', body);
     });
     elements.resync.addEventListener('click', () => post('/api/resync'));
+    elements['weather-form'].addEventListener('submit', event => {
+      event.preventDefault();
+      const body = new URLSearchParams({
+        enabled: elements['weather-enabled'].checked ? '1' : '0',
+        apiHost: elements['weather-host'].value,
+        apiKey: elements['weather-key'].value,
+        latitude: elements['weather-latitude'].value,
+        longitude: elements['weather-longitude'].value
+      });
+      post('/api/weather/settings', body);
+    });
+    function markWeatherChanged() {
+      if (weatherLoaded) elements['weather-state'].textContent = '未保存';
+      updateControls();
+    }
+    elements['weather-region'].addEventListener('change', event => {
+      if (event.target.value !== 'custom') {
+        const [latitude, longitude] = event.target.value.split(',').map(Number);
+        elements['weather-latitude'].value = (latitude / 100).toFixed(2);
+        elements['weather-longitude'].value = (longitude / 100).toFixed(2);
+      }
+      markWeatherChanged();
+    });
+    elements['weather-enabled'].addEventListener('change', markWeatherChanged);
+    for (const id of ['weather-host', 'weather-key', 'weather-latitude', 'weather-longitude']) {
+      elements[id].addEventListener('input', markWeatherChanged);
+    }
     elements.close.addEventListener('click', () => post('/api/close'));
     elements['calendar-form'].addEventListener('submit', event => {
       event.preventDefault();

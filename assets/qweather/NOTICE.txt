@@ -1,0 +1,13 @@
+QWeather Icons
+Copyright (c) QWeather
+Source: https://github.com/qwd/Icons
+Icons: Creative Commons Attribution 4.0 International
+License: https://creativecommons.org/licenses/by/4.0/
+
+Modifications in this project:
+Weather glyphs are selected from the official font, rasterized and resized
+to 30 x 30 one-bit masks for the JD79668 four-color e-paper display.
+Foreground colors and a black outline for yellow glyphs are applied locally.
+The embedded browser catalogue uses the same masks as the firmware.
+
+The original application in reference/jcalendar-main is not copied.

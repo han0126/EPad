@@ -38,32 +38,34 @@ constexpr uint16_t YELLOW = static_cast<uint16_t>(Color4::Yellow);
 void drawTitle(EpdCanvas& canvas, const calendar::MonthData& month) {
   char number[6];
   int16_t x = 10;
-  constexpr int16_t NUMBER_TOP = 15;
-  constexpr int16_t UNIT_TOP = 26;
-  constexpr int16_t META_X = 254;
+  constexpr int16_t NUMBER_TOP = 14;
+  constexpr int16_t UNIT_TOP = 27;
+  constexpr int16_t META_X = 210;
+  constexpr text::Font SMALL_FONT = text::Font::Chinese12;
 
-  // 大号数字与小号“年月日”共用底线，数字红色、单位黑色。
+  // 缩小标题和农历文字，为右上角天气留出独立空间。
   std::snprintf(number, sizeof(number), "%u",
                 static_cast<unsigned int>(month.year));
   x += text::drawText(canvas, number, x, NUMBER_TOP, Color4::Red,
-                      text::Font::Title25);
-  x += text::drawText(canvas, "年", x + 2, UNIT_TOP) + 4;
+                      text::Font::Title20);
+  x += text::drawText(canvas, "年", x + 2, UNIT_TOP, Color4::Black, SMALL_FONT) + 4;
   std::snprintf(number, sizeof(number), "%u",
                 static_cast<unsigned int>(month.month));
   x += text::drawText(canvas, number, x, NUMBER_TOP, Color4::Red,
-                      text::Font::Title25);
-  x += text::drawText(canvas, "月", x + 2, UNIT_TOP) + 4;
+                      text::Font::Title20);
+  x += text::drawText(canvas, "月", x + 2, UNIT_TOP, Color4::Black, SMALL_FONT) + 4;
 
   if (month.highlightedDay >= 1 && month.highlightedDay <= month.dayCount) {
     std::snprintf(number, sizeof(number), "%u",
                   static_cast<unsigned int>(month.highlightedDay));
     x += text::drawText(canvas, number, x, NUMBER_TOP, Color4::Red,
-                        text::Font::Title25);
-    text::drawText(canvas, "日", x + 2, UNIT_TOP);
+                        text::Font::Title20);
+    text::drawText(canvas, "日", x + 2, UNIT_TOP, Color4::Black, SMALL_FONT);
   }
 
-  text::drawText(canvas, month.lunarYear, META_X, 12);
-  text::drawText(canvas, month.lunarDate, META_X, 33);
+  text::drawText(canvas, month.lunarYear, META_X, 12, Color4::Black, SMALL_FONT);
+  // 只调整顶部农历日期：上移两像素，每个字之间额外留一像素。
+  text::drawText(canvas, month.lunarDate, META_X, 31, Color4::Black, SMALL_FONT, 1);
 }
 
 void drawWeekHeader(EpdCanvas& canvas) {
@@ -152,7 +154,8 @@ void drawDates(EpdCanvas& canvas, const calendar::MonthData& month) {
 
 namespace calendar {
 
-void drawMonth(EpdCanvas& canvas, const MonthData& month) {
+void drawMonth(EpdCanvas& canvas, const MonthData& month, const char* regionName,
+               const weather_display::Data& weather) {
   canvas.setRotation(0);
   canvas.clear();
   if (month.month < 1 || month.month > 12 || month.dayCount < 1 ||
@@ -161,6 +164,7 @@ void drawMonth(EpdCanvas& canvas, const MonthData& month) {
   }
 
   drawTitle(canvas, month);
+  weather_display::draw(canvas, weather, regionName);
   drawWeekHeader(canvas);
   drawDates(canvas, month);
 }

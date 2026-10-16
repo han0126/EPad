@@ -23,7 +23,7 @@ void begin(bool retainedTimeValid);
 TimeSource timeSource();
 
 // 非阻塞校时，由 loop() 持续调用 pollNetworkTime() 推进。
-// 配网时保留热点供网页访问；普通校时完成后关闭无线。
+// 配网时保留热点；普通校时成功后先复用连接完成当天天气，再关闭无线。
 bool beginNetworkTime(const char* ssid, const char* password,
                       bool keepAccessPoint = false);
 void pollNetworkTime();

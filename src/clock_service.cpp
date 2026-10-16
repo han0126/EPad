@@ -9,6 +9,7 @@
 
 #include "network_time_config.h"
 #include "wifi_connection.h"
+#include "weather_service.h"
 
 namespace {
 
@@ -43,9 +44,10 @@ void finishSync(clock_service::SyncStatus result) {
     source = clock_service::TimeSource::Network;
   }
   status = result;
-  if (!keepPortal) {
+  if (result == clock_service::SyncStatus::Success) weather_service::onTimeSynchronized();
+  if (!keepPortal && !weather_service::isBusy()) {
     clock_service::stopNetwork();
-  } else if (result != clock_service::SyncStatus::Success) {
+  } else if (keepPortal && result != clock_service::SyncStatus::Success) {
     // 失败后停止连接路由器，保留配网热点供用户修改配置。
     WiFi.disconnect(false, false);
   }
@@ -88,7 +90,7 @@ SyncStatus syncStatus() {
 }
 
 bool beginNetworkTime(const char* ssid, const char* password, bool keepAccessPoint) {
-  if (isSyncing()) return false;
+  if (isSyncing() || weather_service::isBusy()) return false;
   configureTimezone();
   stopSntp();
   receivedNetworkTime.store(false);
@@ -136,6 +138,7 @@ void pollNetworkTime() {
 }
 
 bool stopNetwork() {
+  if (weather_service::isBusy()) return false;
   stopSntp();
   wifi_connection::end();
   if (isSyncing()) status = SyncStatus::Idle;
@@ -150,7 +153,6 @@ bool stopNetwork() {
 bool readLocalTime(struct tm& result) {
   // 配网页面在尚未联网时也可以读取此前保留的系统时间。
   if (source == TimeSource::None) return false;
-  configureTimezone();
   const time_t now = time(nullptr);
   constexpr time_t MIN_VALID_TIME = 1704067200;  // 2024-01-01 UTC。
   return now >= MIN_VALID_TIME && localtime_r(&now, &result) != nullptr;

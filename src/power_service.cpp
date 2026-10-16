@@ -15,10 +15,11 @@
 #include "network_settings.h"
 #include "power_config.h"
 #include "wifi_portal.h"
+#include "weather_service.h"
 
 namespace {
 
-constexpr uint32_t RETAINED_MAGIC = 0x43414C03;
+constexpr uint32_t RETAINED_MAGIC = 0x43414C04;
 constexpr uint32_t IMAGE_HOLD_MAGIC = 0x494D4701;
 constexpr uint64_t US_PER_SECOND = 1000000ULL;
 constexpr uint8_t DISPLAY_OUTPUTS[] = {
@@ -30,9 +31,10 @@ struct RetainedState {
   bool frameValid;
   calendar::Date displayedDate;
   uint8_t rows;
+  weather_display::Data weather;
 };
 
-// 仅依赖 RTC RAM 跨深睡保存，不每日写入 Flash；断电后重新校时。
+// 时钟与画面状态只用 RTC RAM；天气次数和缓存由独立模块保存到 NVS。
 RTC_DATA_ATTR RetainedState retained = {};
 // 仅防御意外的深睡唤醒；按复位键或重新接电会清除此标志并开启配置。
 RTC_DATA_ATTR uint32_t imageHold = 0;
@@ -112,8 +114,10 @@ bool currentFramePending(const display_service::Status& display) {
   const calendar::Date today = {static_cast<uint16_t>(local.tm_year + 1900),
       static_cast<uint8_t>(local.tm_mon + 1), static_cast<uint8_t>(local.tm_mday)};
   if (!calendar::isValidDate(today)) return false;
+  const bool weatherChanged = !display.weatherPreview &&
+      !weather_display::sameData(display.weather, weather_service::dataForDate(today));
   if (display.state == display_service::State::Ready &&
-      calendar::sameDate(today, display.displayedDate)) return false;
+      calendar::sameDate(today, display.displayedDate) && !weatherChanged) return false;
   // 校时可能刚刚完成，不能因日期轮询的一秒节流而提前进入深睡。
   return display_service::requestCurrentDate();
 }
@@ -138,9 +142,10 @@ void sleepUntilNextWake() {
   retained.clockValid = plan.clockValid;
   // 预览不作为下次唤醒的正常画面，下次必须恢复实际日期。
   retained.frameValid = display.state == display_service::State::Ready &&
-      !display.preview && !display.image;
+      !display.preview && !display.image && !display.weatherPreview;
   retained.displayedDate = display.displayedDate;
   retained.rows = display.rows;
+  retained.weather = display.weather;
   retained.magic = RETAINED_MAGIC;
   imageHold = 0;
 
@@ -198,12 +203,12 @@ void begin() {
     return;
   }
   imageHold = 0;
-  timerWake = esp_reset_reason() == ESP_RST_DEEPSLEEP &&
+  timerWake = display_mode::isCalendar() && esp_reset_reason() == ESP_RST_DEEPSLEEP &&
       esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
   const bool retainedValid = timerWake && retained.magic == RETAINED_MAGIC;
   clock_service::begin(retainedValid && retained.clockValid);
   if (retainedValid && retained.frameValid) {
-    display_service::restoreRetainedFrame(retained.displayedDate, retained.rows);
+    display_service::restoreRetainedFrame(retained.displayedDate, retained.rows, retained.weather);
   }
 
   if (!timerWake) {
@@ -224,6 +229,10 @@ void begin() {
 }
 
 bool openConfiguration() {
+  if (weather_service::isBusy()) {
+    Serial.println("[power] Weather request in progress; configure after it completes.");
+    return false;
+  }
   if (requestImageSleep()) {
     Serial.println("[power] Image sleep pending; reset the board to configure again.");
     return false;
@@ -237,10 +246,12 @@ bool openConfiguration() {
 bool requestImageSleep() {
   if (imageSleepArmed) return true;
   if (display_mode::isCalendar() || display_service::isBusy() ||
-      image_transfer::isReceiving() || clock_service::isSyncing()) return false;
+      image_transfer::isReceiving() || clock_service::isSyncing() || weather_service::isBusy()) return false;
   const display_service::Status display = display_service::status();
   if (display.state != display_service::State::Ready ||
       display.error != display_service::Error::None || !display.image) return false;
+  // 成功保存后才锁定深睡，避免网页提示成功但断电又回到日历。
+  if (!display_mode::saveDisplayedImage()) return false;
   imageSleepArmed = true;
   imageReadyAt = millis();
   sleepFailed = false;
@@ -263,8 +274,17 @@ void handle() {
     sleepWithImage();
     return;
   }
-  if (!display_mode::isCalendar() || wifi_portal::isActive() || clock_service::isSyncing() ||
-      display_service::isBusy()) return;
+  if (!display_mode::isCalendar()) {
+    // 重启后只开放限时配置窗口，不重新刷图，也不安排每日唤醒。
+    if (!display_mode::hasRetainedImage() || wifi_portal::isActive() ||
+        display_service::isBusy() || image_transfer::isReceiving()) return;
+    if (millis() - startedAt < PowerConfig::MIN_AWAKE_MS) return;
+    if (sleepFailed && millis() - sleepFailedAt < PowerConfig::SLEEP_ERROR_RETRY_MS) return;
+    sleepWithImage();
+    return;
+  }
+  if (wifi_portal::isActive() || clock_service::isSyncing() ||
+      weather_service::isBusy() || display_service::isBusy()) return;
   if (millis() - startedAt < PowerConfig::MIN_AWAKE_MS) return;
   if (sleepFailed && millis() - sleepFailedAt < PowerConfig::SLEEP_ERROR_RETRY_MS) return;
   if (currentFramePending(display_service::status())) return;
