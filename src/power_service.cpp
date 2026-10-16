@@ -8,6 +8,7 @@
 #include <sys/time.h>
 
 #include "board_config.h"
+#include "calendar_events.h"
 #include "display_service.h"
 #include "clock_service.h"
 #include "display_mode.h"
@@ -19,7 +20,7 @@
 
 namespace {
 
-constexpr uint32_t RETAINED_MAGIC = 0x43414C04;
+constexpr uint32_t RETAINED_MAGIC = 0x43414C05;
 constexpr uint32_t IMAGE_HOLD_MAGIC = 0x494D4701;
 constexpr uint64_t US_PER_SECOND = 1000000ULL;
 constexpr uint8_t DISPLAY_OUTPUTS[] = {
@@ -32,6 +33,7 @@ struct RetainedState {
   calendar::Date displayedDate;
   uint8_t rows;
   weather_display::Data weather;
+  calendar_events::DisplayData events;
 };
 
 // 时钟与画面状态只用 RTC RAM；天气次数和缓存由独立模块保存到 NVS。
@@ -116,8 +118,10 @@ bool currentFramePending(const display_service::Status& display) {
   if (!calendar::isValidDate(today)) return false;
   const bool weatherChanged = !display.weatherPreview &&
       !weather_display::sameData(display.weather, weather_service::dataForDate(today));
+  const bool eventsChanged = !calendar_events::sameDisplayData(
+      display.events, calendar_events::displayDataForDate(today));
   if (display.state == display_service::State::Ready &&
-      calendar::sameDate(today, display.displayedDate) && !weatherChanged) return false;
+      calendar::sameDate(today, display.displayedDate) && !weatherChanged && !eventsChanged) return false;
   // 校时可能刚刚完成，不能因日期轮询的一秒节流而提前进入深睡。
   return display_service::requestCurrentDate();
 }
@@ -146,6 +150,7 @@ void sleepUntilNextWake() {
   retained.displayedDate = display.displayedDate;
   retained.rows = display.rows;
   retained.weather = display.weather;
+  retained.events = display.events;
   retained.magic = RETAINED_MAGIC;
   imageHold = 0;
 
@@ -208,7 +213,8 @@ void begin() {
   const bool retainedValid = timerWake && retained.magic == RETAINED_MAGIC;
   clock_service::begin(retainedValid && retained.clockValid);
   if (retainedValid && retained.frameValid) {
-    display_service::restoreRetainedFrame(retained.displayedDate, retained.rows, retained.weather);
+    display_service::restoreRetainedFrame(retained.displayedDate, retained.rows, retained.weather,
+                                          retained.events);
   }
 
   if (!timerWake) {

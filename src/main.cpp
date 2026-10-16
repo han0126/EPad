@@ -1,5 +1,6 @@
 #include <Arduino.h>
 
+#include "calendar_events.h"
 #include "display_service.h"
 #include "display_mode.h"
 #include "clock_service.h"
@@ -18,6 +19,7 @@ void setup() {
 
   // 没有有效时间时保留屏幕原画面，不把旧演示日期当作当前日期。
   display_mode::begin();
+  calendar_events::begin();
   weather_service::begin();
   display_service::begin();
   power_service::begin();

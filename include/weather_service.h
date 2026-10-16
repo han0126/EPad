@@ -16,6 +16,7 @@ struct Status {
   int16_t httpStatus;
   uint32_t attemptDay;
   uint32_t dataDay;
+  bool locationRefresh;
 };
 
 void begin();
@@ -23,6 +24,7 @@ void handle();
 bool isBusy();
 // 主任务在本次 NTP 成功后调用；只复用当前连接，不自行启动 Wi-Fi。
 void onTimeSynchronized();
+// 保存后调用；经纬度实际变更额外放行一次请求，不改变每日自动请求上限。
 void settingsChanged();
 weather_display::Data dataForDate(const calendar::Date& date);
 Status status();

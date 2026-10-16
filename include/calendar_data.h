@@ -32,7 +32,7 @@ struct MonthData {
   uint8_t month;
   uint8_t dayCount;
   uint8_t firstWeekday;  // 当月 1 日的位置：周日=0，周六=6。
-  uint8_t highlightedDay;  // 需要标红的日期，0 表示不标红。
+  uint8_t highlightedDay;  // 当前或预览中需要强调的日期，0 表示不强调。
   const char* lunarYear;
   const char* lunarDate;
   const DayLabel* dayLabels;

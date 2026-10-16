@@ -61,8 +61,14 @@ void draw(EpdCanvas& canvas, const Data& data, const char* regionName) {
   }
   text::drawText(canvas, temperature, TEMPERATURE_X, 25,
                  Color4::Black, text::Font::Chinese12);
-  text::drawCenteredText(canvas,
-                         regionName != nullptr && *regionName != '\0' ? regionName : "未设置",
+  String city = regionName != nullptr && *regionName != '\0' ? regionName : "未设置";
+  // 长城市名只裁掉末尾完整字符，不改变天气区布局或截断 UTF-8 编码。
+  while (city.length() != 0 && text::textWidth(city.c_str(), text::Font::Chinese12) > 56) {
+    size_t end = city.length() - 1;
+    while (end > 0 && (static_cast<uint8_t>(city[end]) & 0xC0) == 0x80) --end;
+    city.remove(end);
+  }
+  text::drawCenteredText(canvas, city.c_str(),
                          340, 41, 56, Color4::Black, text::Font::Chinese12);
 }
 

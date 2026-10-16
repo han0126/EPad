@@ -3,6 +3,7 @@
 #include <stddef.h>
 
 #include "calendar_data.h"
+#include "calendar_events.h"
 #include "weather_display.h"
 
 // 日历和图片共用显示任务，统一排队并串行操作画布及屏幕。
@@ -24,6 +25,7 @@ struct Status {
   bool imageRequest;  // 当前或最后一次刷新请求是否为图片。
   weather_display::Data weather;
   bool weatherPreview;
+  calendar_events::DisplayData events;
 };
 
 bool begin();
@@ -34,7 +36,8 @@ bool isBusy();
 
 // 只恢复深睡前成功显示的画面记录，不传输像素、不刷新墨水屏。
 bool restoreRetainedFrame(const calendar::Date& date, uint8_t rows,
-                           const weather_display::Data& weather = weather_display::unavailable());
+                           const weather_display::Data& weather = weather_display::unavailable(),
+                           const calendar_events::DisplayData& events = calendar_events::DisplayData{});
 
 // 仅修改屏幕目标日期，不修改系统时钟；不保存预览模式到 Flash。
 bool requestPreview(const calendar::Date& date);

@@ -12,6 +12,8 @@
 #include <cerrno>
 #include <cstdlib>
 
+#include "calendar_events.h"
+#include "calendar_events_portal.h"
 #include "display_service.h"
 #include "clock_service.h"
 #include "display_mode.h"
@@ -22,14 +24,23 @@
 #include "weather_settings.h"
 #include "weather_icons.h"
 #include "weather_service.h"
+#include "weather_cities.h"
 
 // PlatformIO 将独立 HTML 文件直接嵌入固件，无需上传文件系统。
 extern const uint8_t WIFI_SETUP_HTML[] asm("_binary_web_wifi_setup_html_start");
 extern const uint8_t IMAGE_TOOLS_JS[] asm("_binary_web_image_tools_js_start");
+extern const uint8_t IMAGE_CROPPER_JS[] asm("_binary_web_image_cropper_js_start");
+extern const uint8_t CROPPER_JS[] asm("_binary_web_vendor_cropper_min_js_start");
+extern const uint8_t CROPPER_CSS[] asm("_binary_web_vendor_cropper_min_css_start");
+extern const uint8_t CROPPER_LICENSE[] asm("_binary_web_vendor_cropper_LICENSE_txt_start");
 extern const uint8_t WEATHER_ICONS_JSON[] asm("_binary_web_weather_icons_json_start");
 extern const uint8_t WEATHER_PREVIEW_JS[] asm("_binary_web_weather_preview_js_start");
+extern const uint8_t WEATHER_CITIES_JS[] asm("_binary_web_weather_cities_js_start");
+extern const uint8_t CALENDAR_EVENTS_JS[] asm("_binary_web_calendar_events_js_start");
 
 namespace {
+
+constexpr char PORTAL_URL[] = "http://192.168.4.1/";
 
 WebServer server(IPAddress(192, 168, 4, 1), 80);
 DNSServer dns;
@@ -107,8 +118,25 @@ bool calendarSelected() {
   return false;
 }
 
-void sendPage() {
+void redirectToPortal() {
+  // 系统联网探测和陌生网址统一跳到真实 IP，不在探测域名下展开设置页。
   server.sendHeader("Cache-Control", "no-store");
+  server.sendHeader("Location", PORTAL_URL);
+  server.send(302, "text/plain; charset=utf-8", "");
+}
+
+void sendPage() {
+  const String host = server.hostHeader();
+  if (host.length() != 0 && host != "192.168.4.1" && host != "192.168.4.1:80") {
+    redirectToPortal();
+    return;
+  }
+  server.sendHeader("Cache-Control", "no-store");
+  if (server.method() == HTTP_HEAD) {
+    // HEAD 只返回响应头，避免根路径上的探测反复跳转到自身。
+    server.send(200, "text/html; charset=utf-8", "");
+    return;
+  }
   server.send_P(200, "text/html; charset=utf-8",
                 reinterpret_cast<const char*>(WIFI_SETUP_HTML));
 }
@@ -117,6 +145,30 @@ void sendImageTools() {
   server.sendHeader("Cache-Control", "no-store");
   server.send_P(200, "application/javascript; charset=utf-8",
                 reinterpret_cast<const char*>(IMAGE_TOOLS_JS));
+}
+
+void sendImageCropper() {
+  server.sendHeader("Cache-Control", "no-store");
+  server.send_P(200, "application/javascript; charset=utf-8",
+                reinterpret_cast<const char*>(IMAGE_CROPPER_JS));
+}
+
+void sendCropperScript() {
+  server.sendHeader("Cache-Control", "no-store");
+  server.send_P(200, "application/javascript; charset=utf-8",
+                reinterpret_cast<const char*>(CROPPER_JS));
+}
+
+void sendCropperStyle() {
+  server.sendHeader("Cache-Control", "no-store");
+  server.send_P(200, "text/css; charset=utf-8",
+                reinterpret_cast<const char*>(CROPPER_CSS));
+}
+
+void sendCropperLicense() {
+  server.sendHeader("Cache-Control", "no-store");
+  server.send_P(200, "text/plain; charset=utf-8",
+                reinterpret_cast<const char*>(CROPPER_LICENSE));
 }
 
 void sendWeatherIcons() {
@@ -129,6 +181,36 @@ void sendWeatherPreviewScript() {
   server.sendHeader("Cache-Control", "no-store");
   server.send_P(200, "application/javascript; charset=utf-8",
                 reinterpret_cast<const char*>(WEATHER_PREVIEW_JS));
+}
+
+void sendWeatherCitiesScript() {
+  server.sendHeader("Cache-Control", "no-store");
+  server.send_P(200, "application/javascript; charset=utf-8",
+                reinterpret_cast<const char*>(WEATHER_CITIES_JS));
+}
+
+void sendCalendarEventsScript() {
+  server.sendHeader("Cache-Control", "no-store");
+  server.send_P(200, "application/javascript; charset=utf-8",
+                reinterpret_cast<const char*>(CALENDAR_EVENTS_JS));
+}
+
+bool readEventsAllowed() {
+  return authorized() && calendarSelected();
+}
+
+bool writeEventsAllowed() {
+  if (!readEventsAllowed()) return false;
+  if (closeRequested || remainingMs() == 0) {
+    sendJson(409, "{\"error\":\"portal_closing\"}");
+    return false;
+  }
+  if (clock_service::isSyncing() || weather_service::isBusy() ||
+      display_service::isBusy() || image_transfer::isReceiving()) {
+    sendJson(409, "{\"error\":\"mode_busy\"}");
+    return false;
+  }
+  return true;
 }
 
 const char* calendarState(display_service::State state) {
@@ -214,6 +296,10 @@ void sendStatus() {
   json["connected"] = WiFi.status() == WL_CONNECTED;
   json["remaining"] = (remainingMs() + 999) / 1000;
   json["token"] = sessionToken;
+  JsonObject eventsJson = json.createNestedObject("events");
+  eventsJson["ready"] = calendar_events::isReady();
+  eventsJson["revision"] = calendar_events::revision();
+  eventsJson["count"] = calendar_events::count();
   JsonObject calendarJson = json.createNestedObject("calendar");
   calendarJson["state"] = calendarState(display.state);
   calendarJson["error"] = calendarError(display.error);
@@ -221,6 +307,7 @@ void sendStatus() {
   calendarJson["target"] = requestedDate;
   calendarJson["preview"] = display.preview;
   calendarJson["rows"] = display.rows;
+  calendarJson["eventText"] = display.events.text;
   JsonObject powerJson = json.createNestedObject("power");
   powerJson["timerWake"] = power.timerWake;
   powerJson["nextWake"] = nextWake;
@@ -249,6 +336,8 @@ void sendStatus() {
   weatherJson["httpStatus"] = weather.httpStatus;
   weatherJson["attemptDay"] = weather.attemptDay;
   weatherJson["dataDay"] = weather.dataDay;
+  weatherJson["locationRefresh"] = weather.locationRefresh;
+  weatherJson["citySearchBusy"] = weather_cities::isBusy();
   JsonArray links = weatherJson.createNestedArray("attributions");
   for (size_t i = 0; i < weather_service::attributionCount(); ++i) links.add(weather_service::attribution(i));
   if (json.overflowed()) { sendJson(503, "{\"error\":\"status_memory\"}"); return; }
@@ -300,16 +389,22 @@ void resyncNetwork() {
 }
 
 void sendWeatherSettings(const weather_settings::Settings& settings, bool saved) {
-  // 域名已限制为安全 ASCII；绝不将密钥写入响应或串口。
-  char json[384];
-  std::snprintf(json, sizeof(json),
-      "{\"saved\":%s,\"enabled\":%s,\"apiHost\":\"%s\",\"keySaved\":%s,"
-      "\"latitude100\":%d,\"longitude100\":%d}",
-      saved ? "true" : "false", settings.enabled ? "true" : "false",
-      settings.apiHost.length() != 0 ? settings.apiHost.c_str() : "",
-      settings.apiKey.length() != 0 ? "true" : "false",
-      static_cast<int>(settings.latitude100), static_cast<int>(settings.longitude100));
-  sendJson(200, json);
+  // 城市名称通过 JSON 库转义；绝不回传密钥。
+  DynamicJsonDocument json(1024);
+  json["saved"] = saved;
+  json["enabled"] = settings.enabled;
+  json["apiHost"] = settings.apiHost;
+  json["keySaved"] = settings.apiKey.length() != 0;
+  json["latitude100"] = settings.latitude100;
+  json["longitude100"] = settings.longitude100;
+  json["cityId"] = settings.cityId;
+  json["cityName"] = settings.cityName;
+  json["cityProvince"] = settings.cityProvince;
+  if (json.overflowed()) { sendJson(503, "{\"error\":\"status_memory\"}"); return; }
+  String body;
+  if (!body.reserve(measureJson(json) + 1)) { sendJson(503, "{\"error\":\"status_memory\"}"); return; }
+  serializeJson(json, body);
+  sendJson(200, body.c_str());
 }
 
 void readWeatherSettings() {
@@ -339,6 +434,7 @@ void saveWeatherSettings() {
   const int16_t previousLatitude = settings.latitude100;
   const int16_t previousLongitude = settings.longitude100;
   const bool previousEnabled = settings.enabled;
+  const String previousCityName = settings.cityName;
   settings.enabled = enabled == "1";
   settings.apiHost = server.arg("apiHost");
   settings.apiHost.trim();
@@ -361,18 +457,114 @@ void saveWeatherSettings() {
     sendJson(400, "{\"error\":\"weather_location_invalid\"}");
     return;
   }
+  const String cityId = server.arg("cityId");
+  const String cityMode = server.arg("cityMode");
+  const String revision = server.arg("cityQueryId");
+  // 兼容旧页面未传模式；新页面的搜索选择必须使用服务端候选或已有配置。
+  if ((cityMode.length() != 0 && cityMode != "search" && cityMode != "coordinates") ||
+      (cityMode == "coordinates" && cityId.length() != 0)) {
+    sendJson(400, "{\"error\":\"weather_settings_invalid\"}");
+    return;
+  }
+  if (cityId.length() == 0) {
+    if (cityMode == "search") { sendJson(400, "{\"error\":\"weather_city_required\"}"); return; }
+    settings.cityId = "";
+    settings.cityName = "";
+    settings.cityProvince = "";
+  } else if (!((revision.length() == 0 || revision == "0") &&
+      cityId == settings.cityId && settings.cityName.length() != 0 &&
+      settings.latitude100 == previousLatitude && settings.longitude100 == previousLongitude)) {
+    char* end = nullptr;
+    errno = 0;
+    const unsigned long parsed = std::strtoul(revision.c_str(), &end, 10);
+    bool digits = revision.length() > 0 && revision.length() <= 10;
+    for (size_t i = 0; i < revision.length(); ++i) if (revision[i] < '0' || revision[i] > '9') digits = false;
+    weather_cities::City city = {};
+    if (!digits || errno == ERANGE || *end != '\0' || parsed == 0 ||
+        !weather_cities::find(cityId, static_cast<uint32_t>(parsed), settings.latitude100, settings.longitude100, city)) {
+      sendJson(409, "{\"error\":\"weather_city_stale\"}");
+      return;
+    }
+    settings.cityId = city.id;
+    settings.cityName = city.name;
+    settings.cityProvince = city.province;
+  }
   if (!weather_settings::save(settings)) {
     Serial.println("[weather] ERROR: settings save failed.");
     sendJson(503, "{\"error\":\"weather_save_failed\"}");
     return;
   }
-  Serial.println("[weather] Settings saved; daily request limit remains unchanged.");
+  Serial.println("[weather] Settings saved; each location change permits one additional request.");
   weather_service::settingsChanged();
   if (settings.latitude100 != previousLatitude || settings.longitude100 != previousLongitude ||
-      settings.enabled != previousEnabled) {
+      settings.enabled != previousEnabled || settings.cityName != previousCityName) {
     display_service::requestWeatherRedraw();
   }
   sendWeatherSettings(settings, true);
+}
+
+void sendCitySearchStatus() {
+  if (!authorized() || !calendarSelected()) return;
+  const weather_cities::Result& result = weather_cities::result();
+  const weather_cities::State state = weather_cities::state();
+  DynamicJsonDocument json(6144);
+  json["id"] = weather_cities::revision();
+  json["state"] = state == weather_cities::State::Searching ? "searching" :
+      (state == weather_cities::State::Ready ? "ready" : (state == weather_cities::State::Error ? "error" : "idle"));
+  json["error"] = weather_service::errorName(result.error);
+  json["httpStatus"] = result.httpStatus;
+  json["apiCode"] = result.apiCode;
+  JsonArray cities = json.createNestedArray("cities");
+  if (state == weather_cities::State::Ready) {
+    for (size_t i = 0; i < result.count; ++i) {
+      const weather_cities::City& city = result.cities[i];
+      JsonObject item = cities.createNestedObject();
+      item["id"] = city.id;
+      item["name"] = city.name;
+      item["province"] = city.province;
+      item["latitude100"] = city.latitude100;
+      item["longitude100"] = city.longitude100;
+    }
+  }
+  JsonArray sources = json.createNestedArray("sources");
+  for (size_t i = 0; i < result.sourceCount; ++i) sources.add(result.sources[i]);
+  if (json.overflowed()) { sendJson(503, "{\"error\":\"status_memory\"}"); return; }
+  String body;
+  if (!body.reserve(measureJson(json) + 1)) { sendJson(503, "{\"error\":\"status_memory\"}"); return; }
+  serializeJson(json, body);
+  sendJson(200, body.c_str());
+}
+
+void searchWeatherCities() {
+  if (!authorized() || !calendarSelected()) return;
+  if (closeRequested || remainingMs() == 0) { sendJson(409, "{\"error\":\"portal_closing\"}"); return; }
+  if (clock_service::isSyncing() || weather_service::isBusy() || display_service::isBusy() || image_transfer::isReceiving()) {
+    sendJson(409, "{\"error\":\"mode_busy\"}"); return;
+  }
+  String query = server.arg("query"), province = server.arg("province");
+  query.trim();
+  province.trim();
+  if (query.length() == 0 || !weather_settings::isValidName(query) || !weather_settings::isValidName(province)) {
+    sendJson(400, "{\"error\":\"weather_city_query\"}"); return;
+  }
+  weather_settings::Settings credentials;
+  weather_settings::load(credentials);
+  credentials.apiHost = server.arg("apiHost");
+  credentials.apiHost.trim();
+  credentials.apiHost.toLowerCase();
+  const String key = server.arg("apiKey");
+  if (key.length() != 0) credentials.apiKey = key;
+  if (!weather_settings::isValidHost(credentials.apiHost)) { sendJson(400, "{\"error\":\"weather_host_invalid\"}"); return; }
+  if (!weather_settings::isValidKey(credentials.apiKey)) { sendJson(400, "{\"error\":\"weather_key_invalid\"}"); return; }
+  struct tm now = {};
+  if (WiFi.status() != WL_CONNECTED || !clock_service::readLocalTime(now)) {
+    sendJson(409, "{\"error\":\"weather_city_network\"}"); return;
+  }
+  if (!weather_cities::start(query, province, credentials)) { sendJson(409, "{\"error\":\"mode_busy\"}"); return; }
+  // 手动搜索后保留原有两分钟操作窗口；本地状态轮询不延长热点寿命。
+  openedAt = synchronizedAt = millis();
+  successWindow = true;
+  sendCitySearchStatus();
 }
 
 bool parseWeatherNumber(const String& value, long minimum, long maximum, long& result) {
@@ -612,20 +804,30 @@ void registerRoutes() {
   const char* headers[] = {"X-Portal-Token", "Content-Type"};
   server.collectHeaders(headers, 2);
   server.on("/", HTTP_GET, sendPage);
+  server.on("/", HTTP_HEAD, sendPage);
   server.on("/image-tools.js", HTTP_GET, sendImageTools);
+  server.on("/image-cropper.js", HTTP_GET, sendImageCropper);
+  server.on("/cropper.min.js", HTTP_GET, sendCropperScript);
+  server.on("/cropper.min.css", HTTP_GET, sendCropperStyle);
+  server.on("/cropper-license.txt", HTTP_GET, sendCropperLicense);
   server.on("/weather-icons.json", HTTP_GET, sendWeatherIcons);
   server.on("/weather-preview.js", HTTP_GET, sendWeatherPreviewScript);
+  server.on("/weather-cities.js", HTTP_GET, sendWeatherCitiesScript);
+  server.on("/calendar-events.js", HTTP_GET, sendCalendarEventsScript);
   server.on("/api/status", HTTP_GET, sendStatus);
   server.on("/api/wifi", HTTP_POST, connectNetwork);
   server.on("/api/resync", HTTP_POST, resyncNetwork);
   server.on("/api/weather/settings", HTTP_GET, readWeatherSettings);
   server.on("/api/weather/settings", HTTP_POST, saveWeatherSettings);
+  server.on("/api/weather/cities/search", HTTP_POST, searchWeatherCities);
+  server.on("/api/weather/cities/status", HTTP_GET, sendCitySearchStatus);
   server.on("/api/weather/preview", HTTP_POST, previewWeather);
   server.on("/api/weather/preview/clear", HTTP_POST, clearWeatherPreview);
   server.on("/api/display/mode", HTTP_POST, selectDisplayMode);
   server.on("/api/image", HTTP_POST, displayUploadedImage, receiveImage);
   server.on("/api/calendar/preview", HTTP_POST, previewCalendar);
   server.on("/api/calendar/today", HTTP_POST, restoreCurrentCalendar);
+  calendar_events_portal::registerRoutes(server, readEventsAllowed, writeEventsAllowed);
   server.on("/api/close", HTTP_POST, []() {
     if (!authorized()) return;
     if (weather_service::isBusy()) { sendJson(409, "{\"error\":\"weather_busy\"}"); return; }
@@ -640,8 +842,11 @@ void registerRoutes() {
   server.onNotFound([]() {
     if (server.uri().startsWith("/api/")) {
       sendJson(404, "{\"error\":\"not_found\"}");
+    } else if (server.method() == HTTP_GET || server.method() == HTTP_HEAD) {
+      redirectToPortal();
     } else {
-      sendPage();
+      server.sendHeader("Cache-Control", "no-store");
+      server.send(404, "text/plain; charset=utf-8", "Not found");
     }
   });
   routesReady = true;

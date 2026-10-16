@@ -21,6 +21,7 @@ struct Request {
   const uint8_t* imageFrame;
   weather_display::Data weather;
   bool weatherPreview;
+  calendar_events::DisplayData events;
 };
 
 EpdCanvas canvas;
@@ -28,13 +29,16 @@ QueueHandle_t requests = nullptr;
 portMUX_TYPE statusLock = portMUX_INITIALIZER_UNLOCKED;
 display_service::Status displayStatus = {
     display_service::State::WaitingForTime, display_service::Error::None,
-    {}, {}, false, 0, false, false, weather_display::unavailable(), false};
+    {}, {}, false, 0, false, false, weather_display::unavailable(), false, {}};
 bool previewMode = false;
 calendar::Date lastAttempt = {};
 uint32_t lastClockPoll = 0;
 weather_display::Data selectedWeather = weather_display::placeholder();
 bool weatherPreviewMode = false;
 bool weatherRedrawPending = false;
+// 由显示任务在成功完成真实日历刷新后置位，主任务消费一次。
+bool cleanupPending = false;
+calendar::Date cleanupDate = {};
 
 weather_display::Data weatherFor(const calendar::Date& date) {
   return weatherPreviewMode ? selectedWeather : weather_service::dataForDate(date);
@@ -71,7 +75,8 @@ void displayWorker(void*) {
       rows = (month.firstWeekday + month.dayCount + 6) / 7;
       weather_settings::Settings weather;
       weather_settings::load(weather);
-      calendar::drawMonth(canvas, month, weather_settings::regionName(weather), request.weather);
+      calendar::drawMonth(canvas, month, weather_settings::regionName(weather), request.weather,
+                           request.events);
       Serial.printf("[calendar] Rendering %04u-%02u-%02u, rows=%u, lunar=%s %s%s\n",
                     static_cast<unsigned>(request.date.year),
                     static_cast<unsigned>(request.date.month),
@@ -97,6 +102,9 @@ void displayWorker(void*) {
       displayStatus.rows = rows;
       displayStatus.image = image;
     }
+    cleanupPending = error == display_service::Error::None && !image &&
+        !request.preview && !request.weatherPreview;
+    if (cleanupPending) cleanupDate = request.date;
     portEXIT_CRITICAL(&statusLock);
     if (image) {
       Serial.println(error == display_service::Error::None
@@ -118,8 +126,40 @@ bool readCurrentDate(calendar::Date& date) {
   return calendar::isValidDate(date);
 }
 
-bool enqueue(const Request& request) {
+void cleanExpiredMemos() {
+  calendar::Date completedDate = {};
+  portENTER_CRITICAL(&statusLock);
+  const bool pending = cleanupPending;
+  if (pending) completedDate = cleanupDate;
+  cleanupPending = false;
+  portEXIT_CRITICAL(&statusLock);
+  if (!pending) return;
+
+  const display_service::Status display = display_service::status();
+  if (display.state != display_service::State::Ready ||
+      display.error != display_service::Error::None || display.image ||
+      display.preview || display.weatherPreview) return;
+  calendar::Date today = {};
+  // 系统时间必须有效，跨零点或校时后日期不一致时等待新一轮真实刷新。
+  if (!readCurrentDate(today) || !calendar::sameDate(today, completedDate) ||
+      !calendar::sameDate(today, display.displayedDate)) return;
+  size_t removed = 0;
+  const calendar_events::Error result = calendar_events::removeExpired(today, removed);
+  if (result != calendar_events::Error::None) {
+    Serial.printf("[events] Expired memo cleanup incomplete: %s; no repeated writes this refresh.\n",
+                  calendar_events::errorName(result));
+  } else if (removed != 0) {
+    Serial.printf("[events] Removed %u expired memos before %04u-%02u-%02u.\n",
+        static_cast<unsigned>(removed), static_cast<unsigned>(today.year),
+        static_cast<unsigned>(today.month), static_cast<unsigned>(today.day));
+  }
+}
+
+bool enqueue(Request request) {
   if (requests == nullptr || display_service::isBusy()) return false;
+  // 在主任务中生成快照，显示工作任务不读取可变的记录表。
+  request.events = request.imageFrame == nullptr
+      ? calendar_events::displayDataForDate(request.date) : calendar_events::DisplayData{};
   // 状态先置为排队，避免工作任务已开始后又被主任务写回排队状态。
   portENTER_CRITICAL(&statusLock);
   const display_service::Status previous = displayStatus;
@@ -130,6 +170,7 @@ bool enqueue(const Request& request) {
   displayStatus.imageRequest = request.imageFrame != nullptr;
   displayStatus.weather = request.weather;
   displayStatus.weatherPreview = request.weatherPreview;
+  displayStatus.events = request.events;
   portEXIT_CRITICAL(&statusLock);
   if (xQueueSend(requests, &request, 0) != pdTRUE) {
     portENTER_CRITICAL(&statusLock);
@@ -157,7 +198,7 @@ bool refreshWeather(const weather_display::Data& weather, bool preview) {
     return false;
   }
   const weather_display::Data target = preview ? weather : weather_service::dataForDate(date);
-  if (!enqueue({date, datePreview, nullptr, target, preview})) return false;
+  if (!enqueue({date, datePreview, nullptr, target, preview, {}})) return false;
   selectedWeather = weather;
   weatherPreviewMode = preview;
   return true;
@@ -203,12 +244,16 @@ bool isBusy() {
 }
 
 bool restoreRetainedFrame(const calendar::Date& date, uint8_t rows,
-                           const weather_display::Data& weather) {
+                           const weather_display::Data& weather,
+                           const calendar_events::DisplayData& events) {
   if (requests == nullptr || isBusy() || !calendar::isValidDate(date) ||
-      rows < 4 || rows > 6) return false;
+      rows < 4 || rows > 6 || events.text[calendar_events::TEXT_CAPACITY - 1] != '\0' ||
+      (events.importantDays & 0x80000000UL) != 0) return false;
   portENTER_CRITICAL(&statusLock);
   displayStatus = {State::Ready, Error::None, date, date, false, rows, false, false,
-                   weather, false};
+                   weather, false, events};
+  // 恢复记录不等于重新刷屏，不能凭 RTC 中的 Ready 状态触发删除。
+  cleanupPending = false;
   portEXIT_CRITICAL(&statusLock);
   previewMode = false;
   lastAttempt = date;
@@ -218,31 +263,41 @@ bool restoreRetainedFrame(const calendar::Date& date, uint8_t rows,
 void handle() {
   if (!display_mode::isCalendar() || requests == nullptr || isBusy() ||
       clock_service::isSyncing() || weather_service::isBusy()) return;
+  cleanExpiredMemos();
   if (weatherRedrawPending) {
     const Status snapshot = status();
     const bool datePreview = snapshot.preview && calendar::isValidDate(snapshot.requestedDate);
     calendar::Date date = {};
     if (datePreview) date = snapshot.requestedDate;
     else if (!readCurrentDate(date)) return;
-    enqueue({date, datePreview, nullptr, weatherFor(date), weatherPreviewMode});
+    enqueue({date, datePreview, nullptr, weatherFor(date), weatherPreviewMode, {}});
     return;
   }
-  if (previewMode) return;
   if (millis() - lastClockPoll < 1000) return;
   lastClockPoll = millis();
+  const Status snapshot = status();
+  if (previewMode) {
+    // 日期预览也响应记录编辑，但不会改变系统时间或清理备忘。
+    const calendar::Date date = snapshot.requestedDate;
+    if (calendar::isValidDate(date) &&
+        !calendar_events::sameDisplayData(snapshot.events, calendar_events::displayDataForDate(date))) {
+      enqueue({date, true, nullptr, weatherFor(date), weatherPreviewMode, {}});
+    }
+    return;
+  }
   calendar::Date today = {};
   if (!readCurrentDate(today)) return;
   const weather_display::Data target = weatherFor(today);
-  const Status snapshot = status();
   if (calendar::sameDate(today, lastAttempt) &&
-      weather_display::sameData(target, snapshot.weather)) return;
+      weather_display::sameData(target, snapshot.weather) &&
+      calendar_events::sameDisplayData(snapshot.events, calendar_events::displayDataForDate(today))) return;
   // 同一天重复 NTP 校时不刷屏；失败也不在循环内持续刷新屏幕。
-  enqueue({today, false, nullptr, target, weatherPreviewMode});
+  enqueue({today, false, nullptr, target, weatherPreviewMode, {}});
 }
 
 bool requestPreview(const calendar::Date& date) {
   if (!display_mode::isCalendar() || !calendar::isValidDate(date) || weather_service::isBusy()) return false;
-  return enqueue({date, true, nullptr, weatherFor(date), weatherPreviewMode});
+  return enqueue({date, true, nullptr, weatherFor(date), weatherPreviewMode, {}});
 }
 
 bool requestCurrentDate(bool forceRefresh) {
@@ -260,14 +315,15 @@ bool requestCurrentDate(bool forceRefresh) {
   const Status snapshot = status();
   const weather_display::Data target = weatherFor(today);
   if (!forceRefresh && snapshot.state == State::Ready && !snapshot.image &&
-      calendar::sameDate(today, snapshot.displayedDate) && weather_display::sameData(target, snapshot.weather)) {
+      calendar::sameDate(today, snapshot.displayedDate) && weather_display::sameData(target, snapshot.weather) &&
+      calendar_events::sameDisplayData(snapshot.events, calendar_events::displayDataForDate(today))) {
     portENTER_CRITICAL(&statusLock);
     displayStatus.preview = false;
     portEXIT_CRITICAL(&statusLock);
     lastAttempt = today;
     return true;
   }
-  return enqueue({today, false, nullptr, target, weatherPreviewMode});
+  return enqueue({today, false, nullptr, target, weatherPreviewMode, {}});
 }
 
 bool requestWeatherPreview(const weather_display::Data& weather) {
@@ -290,7 +346,7 @@ bool requestImage(const uint8_t* frame, size_t length) {
   if (display_mode::isCalendar() || frame == nullptr || length != EPD_FRAME_BYTES) {
     return false;
   }
-  return enqueue({{}, false, frame, weather_display::placeholder(), false});
+  return enqueue({{}, false, frame, weather_display::placeholder(), false, {}});
 }
 
 }  // namespace display_service

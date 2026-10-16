@@ -11,6 +11,7 @@
 #include "display_mode.h"
 #include "weather_cache.h"
 #include "weather_client.h"
+#include "weather_cities.h"
 #include "weather_config.h"
 #include "weather_settings.h"
 #include "wifi_portal.h"
@@ -23,12 +24,14 @@ bool storageReady = false;
 bool storageFailed = false;
 bool active = false;
 bool fetchedThisBoot = false;
+bool locationRefreshPending = false;
 std::atomic<bool> resultReady{false};
 weather_data::Result completed = {};
 
 struct Job {
   weather_settings::Settings settings;
   uint32_t day;
+  bool locationChange;
 };
 
 Job job;
@@ -65,20 +68,23 @@ void fetchTask(void*) {
 }
 
 void tryStart() {
-  if (active || !settings.enabled || !display_mode::isCalendar() || !storageReady || storageFailed) return;
+  if (active || weather_cities::isBusy() || !settings.enabled || !display_mode::isCalendar() || !storageReady || storageFailed) return;
   calendar::Date today = {};
   if (!currentDate(today) || clock_service::timeSource() != clock_service::TimeSource::Network ||
       clock_service::syncStatus() != clock_service::SyncStatus::Success || WiFi.status() != WL_CONNECTED) return;
   const uint32_t day = dayNumber(today);
   // 高水位也阻止时钟回拨后重复消耗已过去日期的次数。
-  if (day <= cache.lastAttemptDay) {
+  // 手动换地区只放行本次变更，不清空每天自动请求的记录。
+  const bool locationChange = locationRefreshPending;
+  if (!locationChange && day <= cache.lastAttemptDay) {
     Serial.println("[weather] Daily limit retained; no additional API request.");
     return;
   }
-  cache.lastAttemptDay = day;
+  if (day > cache.lastAttemptDay) cache.lastAttemptDay = day;
   cache.lastHttpStatus = 0;
   cache.lastError = weather_data::Error::Interrupted;
-  // 必须先提交 NVS，再启动网络任务；任何掉电位置都不会造成同日第二次 GET。
+  // 先消费本次变更并提交 NVS，再启动任务；失败、重复保存和重启均不重试本次请求。
+  locationRefreshPending = false;
   if (!weather_cache::save(cache)) {
     storageFailed = true;
     Serial.println("[weather] Cannot reserve daily attempt in NVS; no API request sent.");
@@ -86,16 +92,18 @@ void tryStart() {
   }
   job.settings = settings;
   job.day = day;
+  job.locationChange = locationChange;
   resultReady.store(false, std::memory_order_relaxed);
   active = true;
-  Serial.printf("[weather] Daily attempt reserved for %lu; one forecast request.\n", static_cast<unsigned long>(day));
+  Serial.printf("[weather] %s attempt reserved for %lu; one forecast request.\n",
+      locationChange ? "Location change" : "Daily", static_cast<unsigned long>(day));
   if (xTaskCreatePinnedToCore(fetchTask, "weather-fetch", WeatherConfig::TASK_STACK_BYTES,
                               nullptr, 1, nullptr, 0) != pdPASS) {
     active = false;
     job.settings.apiKey = "";
     cache.lastError = weather_data::Error::TaskStart;
     storageFailed = !weather_cache::save(cache);
-    Serial.println("[weather] Task start failed; today's attempt will not be repeated.");
+    Serial.println("[weather] Task start failed; this attempt will not be repeated automatically.");
   }
 }
 
@@ -111,7 +119,7 @@ void begin() {
 }
 
 bool isBusy() {
-  return active;
+  return active || weather_cities::isBusy();
 }
 
 void onTimeSynchronized() {
@@ -119,13 +127,24 @@ void onTimeSynchronized() {
 }
 
 void settingsChanged() {
-  if (active) return;
-  weather_settings::load(settings);
-  // 初次配置可以复用刚校时成功的连接；已尝试过的日期仍不能重新请求。
+  if (isBusy()) return;
+  weather_settings::Settings updated;
+  if (!weather_settings::load(updated)) {
+    storageFailed = true;
+    Serial.println("[weather] Saved settings unreadable; no API request sent.");
+    return;
+  }
+  const bool locationChanged = updated.latitude100 != settings.latitude100 ||
+      updated.longitude100 != settings.longitude100;
+  settings = updated;
+  locationRefreshPending = settings.enabled && (locationRefreshPending || locationChanged);
+  // 已联网校时则立即请求；否则仅在本次开机中等待条件就绪，换日和重启不额外放行。
   tryStart();
 }
 
 void handle() {
+  weather_cities::handle();
+  if (!active && locationRefreshPending) tryStart();
   if (!active || !resultReady.load(std::memory_order_acquire)) return;
   cache.lastError = completed.error;
   cache.lastHttpStatus = completed.httpStatus;
@@ -135,7 +154,7 @@ void handle() {
     fetchedThisBoot = true;
   }
   storageFailed = !weather_cache::save(cache);
-  Serial.printf("[weather] Finished: HTTP %d, %s%s; no further attempt today.\n",
+  Serial.printf("[weather] Finished: HTTP %d, %s%s; no automatic retry of this attempt.\n",
       static_cast<int>(completed.httpStatus), errorName(completed.error),
       storageFailed ? ", cache save failed" : "");
   resultReady.store(false, std::memory_order_relaxed);
@@ -155,15 +174,23 @@ weather_display::Data dataForDate(const calendar::Date& date) {
 
 Status status() {
   Status summary = {State::WaitingForTime, cache.lastError, cache.lastHttpStatus,
-      cache.lastAttemptDay, cache.forecastValid ? cache.forecast.day : uint32_t{0}};
+      cache.lastAttemptDay, cache.forecastValid ? cache.forecast.day : uint32_t{0},
+      locationRefreshPending || (active && job.locationChange)};
   if (!settings.enabled) { summary.state = State::Disabled; summary.error = weather_data::Error::None; return summary; }
   if (active) { summary.state = State::Fetching; summary.error = weather_data::Error::None; return summary; }
   if (!storageReady || storageFailed) { summary.state = State::Error; summary.error = weather_data::Error::Storage; return summary; }
   calendar::Date today = {};
+  if (locationRefreshPending) {
+    summary.state = currentDate(today) ? State::WaitingForNetwork : State::WaitingForTime;
+    summary.error = weather_data::Error::None;
+    summary.httpStatus = 0;
+    return summary;
+  }
   if (!currentDate(today)) return summary;
   if (forecastMatches(today)) {
-    summary.state = fetchedThisBoot ? State::Success : State::Cached;
-    summary.error = weather_data::Error::None;
+    // 可保留当天有效缓存用于显示，但不能把本次请求失败报告为获取成功。
+    summary.state = cache.lastError != weather_data::Error::None ? State::Error :
+        (fetchedThisBoot ? State::Success : State::Cached);
   } else if (dayNumber(today) <= cache.lastAttemptDay) {
     summary.state = cache.lastError == weather_data::Error::None ? State::DailyLimit : State::Error;
   } else {

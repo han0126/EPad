@@ -74,38 +74,43 @@ void drawWeekHeader(EpdCanvas& canvas) {
   canvas.fillRect(GRID_X + CELL_WIDTH * 6, HEADER_Y,
                   CELL_WIDTH, HEADER_HEIGHT, RED);
   for (uint8_t column = 0; column < 7; ++column) {
-    text::drawCenteredText(canvas, WEEK_HEADERS[column],
-                           GRID_X + column * CELL_WIDTH,
-                           HEADER_Y + WEEKDAY_TEXT_OFFSET_Y,
-                           CELL_WIDTH, Color4::White);
+    constexpr text::Font FONT = text::Font::Chinese16;
+    const int16_t width = text::textWidth(WEEK_HEADERS[column], FONT);
+    const int16_t x = GRID_X + column * CELL_WIDTH + (CELL_WIDTH - width - 1) / 2;
+    const int16_t y = HEADER_Y + WEEKDAY_TEXT_OFFSET_Y;
+    // 同色右移一像素叠绘，略微加粗，字号与纵向位置不变。
+    text::drawText(canvas, WEEK_HEADERS[column], x, y, Color4::White, FONT);
+    text::drawText(canvas, WEEK_HEADERS[column], x + 1, y, Color4::White, FONT);
   }
 }
 
-void drawTodayOutline(EpdCanvas& canvas, int16_t left, int16_t top,
-                       int16_t cellHeight) {
-  // 外红内白形成两像素边线，内外圆角同步缩小以保持线宽。
+void drawDayHighlight(EpdCanvas& canvas, int16_t left, int16_t top,
+                      int16_t cellHeight, uint16_t color, bool filled) {
+  // 当天填充和重要日边框复用原有圆角尺寸；仅边框模式挖去内部底色。
   const int16_t verticalInset = cellHeight < 40 ? 0 : 1;
   const int16_t outlineTop = top + verticalInset;
   const int16_t outlineHeight = cellHeight - 2 * verticalInset;
   canvas.fillRoundRect(left + TODAY_INSET_X, outlineTop,
                        CELL_WIDTH - 2 * TODAY_INSET_X, outlineHeight,
-                       TODAY_RADIUS, RED);
-  canvas.fillRoundRect(left + TODAY_INSET_X + TODAY_STROKE,
-                       outlineTop + TODAY_STROKE,
-                       CELL_WIDTH - 2 * TODAY_INSET_X - 2 * TODAY_STROKE,
-                       outlineHeight - 2 * TODAY_STROKE,
-                       TODAY_RADIUS - TODAY_STROKE, WHITE);
+                       TODAY_RADIUS, color);
+  if (!filled) {
+    canvas.fillRoundRect(left + TODAY_INSET_X + TODAY_STROKE,
+                         outlineTop + TODAY_STROKE,
+                         CELL_WIDTH - 2 * TODAY_INSET_X - 2 * TODAY_STROKE,
+                         outlineHeight - 2 * TODAY_STROKE,
+                         TODAY_RADIUS - TODAY_STROKE, WHITE);
+  }
 }
 
 void drawDayLabel(EpdCanvas& canvas, const calendar::DayLabel& label,
-                   int16_t left, int16_t top) {
+                   int16_t left, int16_t top, bool showBackground) {
   if (label.text == nullptr || *label.text == '\0') return;
 
   constexpr text::Font FONT = text::Font::Chinese12;
   const int16_t width = text::textWidth(label.text, FONT);
   const int16_t x = left + (CELL_WIDTH - width) / 2;
   const int16_t textTop = top + DAY_LABEL_TEXT_OFFSET_Y;
-  if (label.kind != calendar::DayLabelKind::Lunar) {
+  if (showBackground && label.kind != calendar::DayLabelKind::Lunar) {
     // 底色顶部向上扩展两像素，底边、宽度和文字位置保持不变。
     canvas.fillRect(x - 3, textTop - 4, width + 6, 15, YELLOW);
   }
@@ -114,7 +119,8 @@ void drawDayLabel(EpdCanvas& canvas, const calendar::DayLabel& label,
                  Color4::Black, FONT);
 }
 
-void drawDates(EpdCanvas& canvas, const calendar::MonthData& month) {
+void drawDates(EpdCanvas& canvas, const calendar::MonthData& month,
+                const calendar_events::DisplayData& events) {
   const uint8_t rows = (month.firstWeekday + month.dayCount + 6) / 7;
   const int16_t cellHeight = (EPD_HEIGHT - GRID_Y - BOTTOM_MARGIN) / rows;
   // 六行时压缩内部留白，保留数字和农历字号及之前的中文下移修正。
@@ -132,12 +138,20 @@ void drawDates(EpdCanvas& canvas, const calendar::MonthData& month) {
             : nullptr;
     const bool isHoliday =
         label != nullptr && label->kind == calendar::DayLabelKind::Holiday;
-    const Color4 color =
-        column == 0 || column == 6 || day == month.highlightedDay || isHoliday
-            ? Color4::Red
-            : Color4::Black;
-    if (day == month.highlightedDay) {
-      drawTodayOutline(canvas, left, top, cellHeight);
+    const bool important = (events.importantDays & (uint32_t{1} << (day - 1))) != 0;
+    const bool isToday = day == month.highlightedDay;
+    const bool hasSpecialLabel = label != nullptr &&
+        label->kind != calendar::DayLabelKind::Lunar;
+    // 当天统一黄底：普通日期黑字，节日、节气或重要日红字。
+    // 非当天沿用重要日、周末和节日的原有样式。
+    const Color4 color = isToday
+        ? (important || hasSpecialLabel ? Color4::Red : Color4::Black)
+        : (important ? Color4::Yellow :
+            (column == 0 || column == 6 || isHoliday ? Color4::Red : Color4::Black));
+    if (isToday) {
+      drawDayHighlight(canvas, left, top, cellHeight, YELLOW, true);
+    } else if (important) {
+      drawDayHighlight(canvas, left, top, cellHeight, YELLOW, false);
     }
 
     char number[3];
@@ -145,7 +159,8 @@ void drawDates(EpdCanvas& canvas, const calendar::MonthData& month) {
     text::drawCenteredText(canvas, number, left, top + numberOffset, CELL_WIDTH,
                            color, text::Font::Date17);
     if (label != nullptr) {
-      drawDayLabel(canvas, *label, left, top + lunarOffset);
+      // 当天已有整框黄底，不再叠加小字下方的独立黄色标签。
+      drawDayLabel(canvas, *label, left, top + lunarOffset, !isToday);
     }
   }
 }
@@ -155,7 +170,7 @@ void drawDates(EpdCanvas& canvas, const calendar::MonthData& month) {
 namespace calendar {
 
 void drawMonth(EpdCanvas& canvas, const MonthData& month, const char* regionName,
-               const weather_display::Data& weather) {
+               const weather_display::Data& weather, const calendar_events::DisplayData& events) {
   canvas.setRotation(0);
   canvas.clear();
   if (month.month < 1 || month.month > 12 || month.dayCount < 1 ||
@@ -165,8 +180,10 @@ void drawMonth(EpdCanvas& canvas, const MonthData& month, const char* regionName
 
   drawTitle(canvas, month);
   weather_display::draw(canvas, weather, regionName);
+  // 左侧标题下方的单行正文不占用农历和天气区域。
+  text::drawText(canvas, events.text, 10, 43, Color4::Red, text::Font::Chinese12);
   drawWeekHeader(canvas);
-  drawDates(canvas, month);
+  drawDates(canvas, month, events);
 }
 
 }  // namespace calendar
