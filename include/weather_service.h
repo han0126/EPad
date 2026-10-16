@@ -5,6 +5,7 @@
 
 namespace weather_service {
 
+// 主任务负责设置、缓存和状态；HTTPS 工作任务只交回请求结果。
 enum class State : uint8_t {
   Disabled, WaitingForTime, WaitingForNetwork, Fetching, Success, Cached, DailyLimit, Error
 };

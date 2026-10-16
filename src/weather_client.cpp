@@ -8,9 +8,8 @@
 #include <freertos/task.h>
 #include <rom/miniz.h>
 
-#include <cerrno>
-#include <cstdio>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>

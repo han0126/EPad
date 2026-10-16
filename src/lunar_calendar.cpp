@@ -1,7 +1,7 @@
 #include "lunar_calendar.h"
 
-#include <sxtwl.h>
 #include <memory>
+#include <sxtwl.h>
 
 namespace {
 
@@ -27,6 +27,7 @@ bool convertMonth(uint16_t year, uint8_t month, MonthInfo& result,
       month < 1 || month > 12) return false;
 
   result.dayCount = daysInMonth(year, month);
+  // lib/sxtwl 是农历、节气计算的实际依赖，不是参考示例。
   std::unique_ptr<Day> first(sxtwl::fromSolar(year, month, 1));
   if (!first) return false;
   result.firstWeekday = first->getWeek();

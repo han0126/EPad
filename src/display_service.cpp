@@ -230,7 +230,6 @@ void handle() {
   if (previewMode) return;
   if (millis() - lastClockPoll < 1000) return;
   lastClockPoll = millis();
-  if (clock_service::isSyncing() || weather_service::isBusy()) return;
   calendar::Date today = {};
   if (!readCurrentDate(today)) return;
   const weather_display::Data target = weatherFor(today);

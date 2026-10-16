@@ -8,6 +8,6 @@
   },
   "license": "BSD-3-Clause",
   "build": {
-    "srcFilter": ["+<*.cpp>", "-<XL.cpp>"]
+    "srcFilter": ["+<*.cpp>"]
   }
 }

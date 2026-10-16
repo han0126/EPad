@@ -64,9 +64,6 @@ void draw(EpdCanvas& canvas, const Data& data, const char* regionName) {
   text::drawCenteredText(canvas,
                          regionName != nullptr && *regionName != '\0' ? regionName : "未设置",
                          340, 41, 56, Color4::Black, text::Font::Chinese12);
-  if (data.source == Source::Network) {
-    text::drawText(canvas, "和风天气", 10, 43, Color4::Black, text::Font::Chinese12);
-  }
 }
 
 }  // namespace weather_display
