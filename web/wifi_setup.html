@@ -40,6 +40,12 @@
     .image-options .field { min-width: 0; margin: 0; }
     .image-options select { min-width: 0; }
     .image-conversion { margin-top: 20px; }
+    .image-algorithm-settings { margin: 20px 0; }
+    .image-algorithm-settings .check { margin: 0 0 18px; }
+    .image-palette { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 14px 0; }
+    .image-palette label { display: grid; gap: 6px; justify-items: center; font-size: 13px; }
+    .image-palette input { width: 46px; height: 36px; padding: 2px; background: #fff; border: 1px solid #acb9b1; border-radius: 4px; }
+    .image-palette-settings summary { cursor: pointer; font-size: 14px; }
     .image-crop-editor { margin: 24px 0; }
     .image-crop-editor > .field-label { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
     .image-crop-stage { width: 100%; max-width: 480px; aspect-ratio: 4 / 3; margin: auto; position: relative; overflow: hidden; background: #e8edeb; touch-action: none; }
@@ -361,7 +367,29 @@
             <option value="legacy">原有方案</option>
             <option value="epd-photo" title="四色色域映射、灰度保护与 FS 蛇形误差扩散">四色照片</option>
             <option value="epd-smooth" title="四色色域映射、灰度保护与 JJN 蛇形误差扩散">四色平滑</option>
+            <option value="epd-perceptual">感知四色扩散</option>
+            <option value="epd-adaptive">亮度自适应扩散（实验）</option>
+            <option value="epd-blue">蓝噪声面积分配</option>
+            <option value="epd-structure">结构自适应扩散（实验）</option>
+            <option value="epd-iterative">四色感知迭代（实验）</option>
           </select>
+        </div>
+        <div id="image-algorithm-settings" class="image-algorithm-settings" hidden>
+          <label class="check"><input id="image-neutral" type="checkbox" checked disabled>灰度保护</label>
+          <div id="image-iterations-field" class="field" hidden>
+            <label class="field-label" for="image-iterations">迭代轮数</label>
+            <input id="image-iterations" type="number" min="1" max="12" step="1" value="4" disabled>
+          </div>
+          <details class="image-palette-settings">
+            <summary>屏幕色板（计算模型）</summary>
+            <div class="image-palette">
+              <label>黑<input id="image-ink-0" type="color" value="#000000" disabled></label>
+              <label>白<input id="image-ink-1" type="color" value="#ffffff" disabled></label>
+              <label>黄<input id="image-ink-2" type="color" value="#ffff00" disabled></label>
+              <label>红<input id="image-ink-3" type="color" value="#ff0000" disabled></label>
+            </div>
+            <button id="image-palette-reset" type="button" disabled>理想四色</button>
+          </details>
         </div>
         <div id="image-crop-editor" class="image-crop-editor" hidden>
           <p class="field-label">原图选区</p>
@@ -380,7 +408,10 @@
         <canvas id="image-preview" width="400" height="300" aria-label="四色图片预览"></canvas>
         <progress id="image-progress" max="100" value="0" aria-label="图片处理及上传进度"></progress>
         <p id="image-transfer-state" role="status">待选择图片</p>
-        <div class="actions"><button id="image-send" class="primary" type="submit" disabled>上传并显示</button></div>
+        <div class="actions">
+          <button id="image-send" class="primary" type="submit" disabled>上传并显示</button>
+          <button id="image-cancel" type="button" disabled>取消处理</button>
+        </div>
         <p id="image-error" role="alert"></p>
       </form>
     </section>
@@ -391,6 +422,7 @@
     </footer>
   </main>
 
+  <script src="/image-algorithms.js"></script>
   <script src="/image-tools.js"></script>
   <script src="/cropper.min.js"></script>
   <script src="/image-cropper.js"></script>
@@ -409,6 +441,8 @@
        'time-panel', 'wifi-panel', 'calendar-panel', 'image-panel', 'image-state',
        'image-form', 'image-file', 'image-fit', 'image-rotation',
        'image-algorithm',
+       'image-algorithm-settings', 'image-neutral', 'image-iterations', 'image-iterations-field',
+       'image-ink-0', 'image-ink-1', 'image-ink-2', 'image-ink-3', 'image-palette-reset', 'image-cancel',
        'image-crop-editor', 'image-crop-stage', 'image-crop-source', 'image-crop-zoom',
        'image-crop-zoom-value', 'image-crop-in', 'image-crop-out', 'image-crop-reset',
        'image-preview', 'image-progress', 'image-transfer-state', 'image-send',
@@ -467,7 +501,9 @@
       image_response: '设备响应异常，请查看设备状态后重试。',
       image_sleep_pending: '图片已显示，正在进入深睡。',
       image_tools: '图片处理组件未加载，请刷新页面。',
-      image_options: '转换选项无效，请刷新页面并重新选择算法。',
+      image_options: '请核对转换算法、迭代轮数（1～12）及色板参数。',
+      image_algorithm_tools: '新增算法组件未加载，请刷新页面；原有三种方案仍可使用。',
+      image_palette: '请核对色板：白色需明显亮于黑色，四色值不能重复。',
       image_crop_tools: '裁切组件加载失败，请刷新页面；其他适配方式仍可使用。',
       image_crop_pending: '裁切选区尚未就绪，请重新选择图片或重置选区。',
       events_date: '请选择 1901—2099 年内有效的公历日期。',
@@ -593,6 +629,17 @@
       for (const id of ['image-file', 'image-fit', 'image-rotation', 'image-algorithm']) {
         elements[id].disabled = imageBlocked;
       }
+      const advancedAlgorithm = ['epd-perceptual', 'epd-adaptive', 'epd-blue', 'epd-structure', 'epd-iterative']
+        .includes(elements['image-algorithm'].value);
+      elements['image-algorithm-settings'].hidden = !advancedAlgorithm;
+      elements['image-iterations-field'].hidden = elements['image-algorithm'].value !== 'epd-iterative';
+      for (const id of ['image-neutral', 'image-ink-0', 'image-ink-1',
+                        'image-ink-2', 'image-ink-3', 'image-palette-reset']) {
+        elements[id].disabled = imageBlocked || !advancedAlgorithm;
+      }
+      elements['image-iterations'].disabled = imageBlocked || elements['image-algorithm'].value !== 'epd-iterative';
+      // 本地取消不依赖热点连接，断线时仍可停止耗时计算。
+      elements['image-cancel'].disabled = !imagePreparing || posting || closed || imageSleepPending || isCalendar || imageBusy;
       elements['image-send'].disabled = imageBlocked || imagePreparing || !imageFrame;
       elements['image-send'].textContent = posting && !isCalendar ? '正在传输…' : '上传并显示';
       if (weatherPreview) {
@@ -929,6 +976,15 @@
         const fit = elements['image-fit'].value;
         const rotation = elements['image-rotation'].value;
         const algorithm = elements['image-algorithm'].value;
+        const advanced = ['epd-perceptual', 'epd-adaptive', 'epd-blue', 'epd-structure', 'epd-iterative'].includes(algorithm);
+        const algorithmOptions = advanced ? {
+          neutral: elements['image-neutral'].checked,
+          passes: algorithm === 'epd-iterative' ? Number(elements['image-iterations'].value) : 4,
+          palette: [0, 1, 2, 3].map(index => {
+            const hex = elements[`image-ink-${index}`].value;
+            return [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16));
+          })
+        } : {};
         let crop = null;
         if (fit === 'manual') {
           if (!cropEditor) throw new Error('image_crop_tools');
@@ -937,11 +993,11 @@
           crop = cropEditor.selection();
         }
         const result = await window.ImageTools.prepare(file, {
-          fit, rotation, algorithm, crop,
+          fit, rotation, algorithm, crop, ...algorithmOptions,
           isCurrent: () => revision === imageRevision && !closed && !imageSleepPending && displayMode === 'image',
-          onProgress: progress => {
+          onProgress: (progress, label) => {
             elements['image-progress'].value = progress;
-            elements['image-transfer-state'].textContent = `正在生成四色预览 ${progress}%`;
+            elements['image-transfer-state'].textContent = `${label || '正在生成四色预览'} ${progress}%`;
           }
         });
         if (revision !== imageRevision || closed || imageSleepPending || displayMode !== 'image') return;
@@ -1060,6 +1116,31 @@
     for (const id of ['image-file', 'image-fit', 'image-rotation', 'image-algorithm']) {
       elements[id].addEventListener('change', scheduleImage);
     }
+    for (const id of ['image-neutral', 'image-iterations', 'image-ink-0', 'image-ink-1', 'image-ink-2', 'image-ink-3']) {
+      // 输入一变就作废旧帧，避免按回车时上传仍属于旧参数的像素。
+      elements[id].addEventListener('input', scheduleImage);
+    }
+    elements['image-palette-reset'].addEventListener('click', () => {
+      ['#000000', '#ffffff', '#ffff00', '#ff0000'].forEach((hex, index) => {
+        elements[`image-ink-${index}`].value = hex;
+      });
+      scheduleImage();
+    });
+    elements['image-cancel'].addEventListener('click', () => {
+      if (!imagePreparing || posting || imageBusy || imageSleepPending || closed) return;
+      clearTimeout(imagePrepareTimer);
+      imagePrepareTimer = null;
+      imageRevision += 1;
+      imagePreparing = false;
+      imageFrame = null;
+      if (window.ImageTools) window.ImageTools.cancel();
+      elements['image-progress'].value = 0;
+      elements['image-transfer-state'].textContent = '处理已取消';
+      elements['image-preview'].setAttribute('aria-busy', 'false');
+      const context = elements['image-preview'].getContext('2d');
+      if (context) context.clearRect(0, 0, 400, 300);
+      updateControls();
+    });
     window.addEventListener('pagehide', () => {
       clearTimeout(imagePrepareTimer);
       imagePrepareTimer = null;

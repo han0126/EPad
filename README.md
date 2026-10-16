@@ -1,58 +1,37 @@
-# JD79668 四色墨水屏
+# JD79668 四色墨水屏日历
 
-基于 ESP32-S3、Arduino 和 PlatformIO，驱动 400 × 300 黑、白、红、黄四色墨水屏。
-支持自动日历和网页传图，两个模式互斥。
+ESP32-S3 + Arduino + PlatformIO，驱动 400 × 300 黑、白、黄、红四色屏。
 
-## 使用方式
+## 功能
 
-1. 上电或按复位键，连接热点 `EPD-Calendar`，默认密码 `calendar1234`。
-2. 用浏览器打开 `http://192.168.4.1`，选择显示模式。
-3. 日历模式：配置 2.4 GHz Wi-Fi，联网校准北京时间。凭据校时成功后保存到 NVS。
-4. 图片模式：选择 PNG、JPEG 或 WebP 图片，预览四色效果后上传；支持旋转、完整显示、铺满裁切和色彩抖动。原图最大 10 MB、4000 万像素，图片传输不依赖外网。
+- 日历：1901—2099 年公历、农历、节气和常见节日，自动适配月份行数；每日零点后唤醒、联网校时、刷新并深睡。
+- 天气：和风 API KEY 认证，支持预设地区、国内城市在线搜索和自定义坐标。每日自动尝试一次；手动保存不同坐标时额外请求一次，同坐标重复保存不重复请求。
+- 重要日与备忘：网页管理，每日最多一条、正文最多 15 个字符。重要日按月日每年重复并永久保存；过期备忘在实际日历成功刷新后删除。
+- 图片：网页上传、旋转和手动裁切，提供原有方案、四色照片、四色平滑、感知扩散、亮度自适应、蓝噪声、结构自适应和感知迭代，共 8 种算法。
+- 新增算法支持灰度保护、计算色板，感知迭代支持 1—12 轮；均在浏览器端处理，设备只接收 30,000 字节四色像素和校验信息。
+- 日历／图片模式记入 NVS，断电后保留。图片成功显示后约 3 秒关闭无线、取消自动唤醒并深睡；复位或重新上电可再次配置。
 
-日历每天北京时间约 00:00:02 唤醒，尝试一次校时，日期变化后刷新并深睡。
-实际更新还需联网和刷屏时间；联网失败时沿用有效保留时钟，长期断网会累积误差。
-支持 1901—2099 年公历、农历、节气及常见节日，自动适配月份行数。
+## 使用
 
-图片在浏览器转换为 400 × 300 两位像素数据，设备校验尺寸、长度和 CRC32 后刷屏。
-成功后约三秒自动关闭无线、取消全部自动唤醒并深睡，不能继续在网页换图。
-重新配置请复位或断电重接，再连接热点并刷新网页。不要在刷屏过程中断电。
-上传、校验或刷屏失败时不进入永久深睡，热点窗口内仍可重试。
+1. 上电或复位，连接热点 `EPD-Calendar`，密码 `calendar1234`。
+2. 浏览器打开 `http://192.168.4.1/`，选择日历或图片模式。
+3. 日历模式配置 2.4 GHz Wi-Fi；天气填写专属 API Host 和 KEY，城市搜索需具备 GeoAPI 调用权限。
+4. 图片支持 PNG、JPEG、WebP，最大 10 MiB、1600 万像素，任一边不超过 8192 像素；预览完成后上传，刷屏时勿断电。
 
-串口波特率为 `115200`。串口 `W` 仅在清醒且图片尚未成功锁定时开启配置，不能唤醒深睡设备。
+图片处理及上传不需要外网；校时、天气和在线城市搜索需要外网。定时唤醒不开热点；日历配网初始窗口为 5 分钟，校时成功后通常保留 2 分钟，图片配置窗口为 10 分钟。
 
-## 代码结构
+## 文件
 
-公共头文件位于 `include/`，同名实现位于 `src/`。
+- `src/`、`include/`：屏幕驱动、日历、联网、天气、事件记录和电源管理。
+- `web/`：随固件嵌入的离线网页；`image_tools.js` 负责图片处理与上传，`image_algorithms.js` 提供五种新增算法。
+- `lib/sxtwl/`：农历依赖，不可删除。
+- `assets/qweather/`：图标许可；`web/vendor/`：离线裁切组件及许可，均需保留。
+- `tools/image_algorithm_lab.html`：可直接在电脑浏览器打开的独立算法对比页。
+- `tools/generate_weather_icons.ps1`、`tools/weather_conditions.json`：天气图标再生成工具及输入数据。
 
-| 文件或模块 | 作用 |
-| --- | --- |
-| `main.cpp` | 启动和主循环调度 |
-| `display_service` | 日历、图片共用的异步显示任务，串行访问屏幕 |
-| `display_mode` | 显示模式选择及未完成图片操作的退出处理 |
-| `calendar_data`、`lunar_calendar` | 日历数据、农历换算、节气和节日标签 |
-| `calendar_view`、`text_renderer` | 日历布局和 UTF-8 字体绘制 |
-| `epd_canvas`、`jd79668_driver` | 两位像素画布和屏幕硬件驱动 |
-| `clock_service`、`wifi_connection` | 非阻塞校时、RTC 快连缓存及扫描回退 |
-| `network_settings`、`wifi_portal` | NVS 凭据、热点、网页及 HTTP 接口 |
-| `image_transfer` | 图片流接收、校验和显示提交 |
-| `power_service` | 每日定时唤醒和图片常驻深睡 |
-| `web/wifi_setup.html`、`web/image_tools.js` | 离线网页、图片转换和上传，随固件嵌入 |
-| `lib/sxtwl` | 农历与节气计算核心 |
-
-## 常用配置
-
-- `include/board_config.h`：接线及驱动时序；默认 BUSY=13、CS=10、RST=14、DC=9、SCK=12、SDA=11。
-- `include/display_config.h`：尺寸、帧大小及颜色编码；黑=0、白=1、黄=2、红=3。
-- `src/calendar_view.cpp`：日期、农历文字、黄色标签背景及当日边框的位置。
-- `include/network_time_config.h`：时区、NTP 服务器、热点名称、密码和超时。
-- `include/power_config.h`：图片深睡提示时间、错误重试间隔及唤醒参数。`WAKE_INTERVAL_OVERRIDE_SECONDS` 正常使用须为 `0`；非零仅用于日历实物评估，不影响图片永久深睡。
-
-优先通过网页配网。可选的本地配置格式见 `include/wifi_credentials.example.h`，实际 `wifi_credentials.h` 已被 Git 忽略，不要提交真实密码。
+板型与依赖见 `platformio.ini`，接线见 `include/board_config.h`。正常使用时 `include/power_config.h` 的 `WAKE_INTERVAL_OVERRIDE_SECONDS` 应为 `0`。
 
 ## 编译烧录
-
-在项目根目录使用 PlatformIO；板型和依赖见 `platformio.ini`：
 
 ```sh
 pio run
@@ -60,8 +39,4 @@ pio run -t upload
 pio device monitor -b 115200
 ```
 
-中文使用 U8g2 文泉驿 GB2312 字库，绘图依赖 Adafruit GFX。
-农历核心使用 `sxtwl`，保留其 BSD-3-Clause 许可证，详见 `lib/sxtwl/LICENSE`。
-`reference/` 中的 jcalendar 仅用于方案参考，不参与固件编译。
-
-修改后需编译并上机确认；实际深睡电流受开发板稳压器、指示灯和屏幕适配板影响。
+依赖许可保留在 `lib/sxtwl/LICENSE`、`assets/qweather/NOTICE.txt`、`web/vendor/cropper.LICENSE.txt`。勿提交真实密码或密钥；可选本地配置 `include/wifi_credentials.h` 已忽略。更新后需自行编译和实物确认。

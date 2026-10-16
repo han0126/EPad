@@ -310,14 +310,14 @@ HttpResult requestJson(const weather_settings::Settings& settings, const char* u
 }
 
 String encodeQuery(const String& value) {
-  constexpr char HEX[] = "0123456789ABCDEF";
+  constexpr char HEX_DIGITS[] = "0123456789ABCDEF";
   String encoded;
   if (!encoded.reserve(value.length() * 3)) return encoded;
   for (size_t i = 0; i < value.length(); ++i) {
     const uint8_t c = static_cast<uint8_t>(value[i]);
     if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
         (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') encoded += static_cast<char>(c);
-    else { encoded += '%'; encoded += HEX[c >> 4]; encoded += HEX[c & 15]; }
+    else { encoded += '%'; encoded += HEX_DIGITS[c >> 4]; encoded += HEX_DIGITS[c & 15]; }
   }
   return encoded;
 }

@@ -1,0 +1,973 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>四色图像实验室</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, "Microsoft YaHei", sans-serif; color: #202624; background: #f3f5f4; }
+    * { box-sizing: border-box; letter-spacing: 0; }
+    body { margin: 0; }
+    button, input, select { font: inherit; }
+    button, select, input[type="number"] { min-height: 36px; border: 1px solid #b8c4be; background: white; border-radius: 5px; padding: 5px 10px; }
+    button { cursor: pointer; color: inherit; }
+    button:hover:not(:disabled) { background: #e8eeeb; border-color: #5e786c; }
+    button:disabled, input:disabled, select:disabled { cursor: default; opacity: .5; }
+    button.primary { background: #206b50; color: white; border-color: #206b50; }
+    button.primary:hover:not(:disabled) { background: #19553f; }
+    :focus-visible { outline: 2px solid #206b50; outline-offset: 3px; }
+    header { background: white; border-bottom: 1px solid #d8dfdb; }
+    .header-inner, main { max-width: 1480px; margin: auto; padding: 18px 24px; }
+    .header-inner { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+    h1 { font-size: 24px; margin: 0; font-weight: 650; }
+    h2 { font-size: 16px; margin: 0 0 12px; }
+    p { margin: 0; }
+    .muted, output, .meta { color: #617068; font-size: 12px; overflow-wrap: anywhere; }
+    .toolbar, .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .controls { display: grid; grid-template-columns: minmax(240px, 1.2fr) minmax(260px, 1fr) minmax(250px, 1fr); gap: 22px; padding: 4px 0 20px; border-bottom: 1px solid #d3dcd6; }
+    .field { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+    .field > label:first-child { font-size: 13px; min-width: 56px; }
+    input[type="file"] { width: 100%; max-width: 360px; font-size: 13px; }
+    input[type="range"] { accent-color: #206b50; min-width: 100px; flex: 1; }
+    input[type="checkbox"] { accent-color: #206b50; width: 16px; height: 16px; }
+    .check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+    .palette { display: flex; gap: 12px; align-items: start; }
+    .palette label { display: grid; justify-items: center; gap: 4px; font-size: 12px; }
+    input[type="color"] { width: 42px; height: 32px; padding: 2px; border: 1px solid #b8c4be; background: white; border-radius: 4px; }
+    #passes { width: 65px; }
+    .runbar { padding: 16px 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    progress { width: 150px; height: 8px; accent-color: #206b50; }
+    #status { font-size: 13px; flex: 1; min-width: 150px; }
+    #error { color: #b8272a; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; align-items: start; }
+    .tile { min-width: 0; background: white; border: 1px solid #d3dcd6; border-radius: 6px; overflow: hidden; }
+    .tile-head { padding: 10px 12px; display: flex; gap: 8px; align-items: center; min-height: 53px; }
+    .tile-title { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+    .tile-head button { font-size: 12px; min-height: 30px; padding: 3px 8px; }
+    .tile canvas { display: block; width: 100%; aspect-ratio: 4 / 3; background: white; image-rendering: pixelated; border-top: 1px solid #edf0ee; border-bottom: 1px solid #edf0ee; }
+    #original { touch-action: none; cursor: crosshair; }
+    #original.drag { cursor: grab; }
+    #original.drag:active { cursor: grabbing; }
+    .tile-foot { padding: 8px 12px; min-height: 36px; display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: #617068; }
+    .algorithm-check { display: inline-flex; align-items: center; gap: 7px; }
+    .algorithm-check input { margin: 0; flex-shrink: 0; }
+    .detail { margin-top: 22px; border-top: 1px solid #d3dcd6; padding: 16px 0; }
+    .detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+    .detail-head h2 { margin: 0; }
+    .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+    .detail-grid figure { margin: 0; min-width: 0; }
+    .detail-grid figcaption { font-size: 13px; margin-bottom: 6px; }
+    .detail-grid canvas { display: block; width: 100%; aspect-ratio: 4 / 3; background: white; border: 1px solid #cbd6ce; image-rendering: pixelated; }
+    footer { padding: 16px 0 4px; border-top: 1px solid #d3dcd6; display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; }
+    a { color: #206b50; }
+    @media (max-width: 1080px) { .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 650px) {
+      .header-inner, main { padding: 14px 12px; }
+      h1 { font-size: 21px; }
+      .controls, .grid, .detail-grid { grid-template-columns: minmax(0, 1fr); }
+      .controls { gap: 12px; }
+      .toolbar { gap: 7px; }
+      progress { width: 90px; }
+    }
+  </style>
+</head>
+<body>
+  <header><div class="header-inner">
+    <h1>四色图像实验室</h1>
+    <div class="row"><span class="muted">JD79668 · 400 × 300 · 本地离线</span><button id="chart" type="button">色阶样张</button></div>
+  </div></header>
+  <main>
+    <section class="controls" aria-label="图像设置">
+      <div>
+        <h2>原图</h2>
+        <div class="field"><input id="file" type="file" accept="image/png,image/jpeg,image/webp" aria-label="选择原图"></div>
+        <p id="file-info" class="meta">未选择图片</p>
+        <div class="field" style="margin-top:12px">
+          <label for="fit">画面</label><select id="fit"><option value="contain">完整显示</option><option value="cover">铺满裁切</option><option value="manual">手动裁切</option></select>
+          <button id="rotate" type="button" title="顺时针旋转 90 度" aria-label="顺时针旋转 90 度">↻</button>
+          <button id="reset" type="button" title="重置裁切">重置</button><output id="rotation">0°</output>
+        </div>
+        <div class="field"><label for="zoom">裁切缩放</label><input id="zoom" type="range" min="1" max="8" step="0.01" value="1"><output id="zoom-value">1.00×</output></div>
+      </div>
+      <div>
+        <h2>屏幕色板</h2>
+        <div class="palette">
+          <label>黑<input id="ink-0" type="color" value="#000000"></label>
+          <label>白<input id="ink-1" type="color" value="#ffffff"></label>
+          <label>黄<input id="ink-2" type="color" value="#ffff00"></label>
+          <label>红<input id="ink-3" type="color" value="#ff0000"></label>
+        </div>
+        <div class="field" style="margin-top:12px"><button id="palette-reset" type="button">理想四色</button><span id="palette-state" class="meta">理想值 · 非实测</span></div>
+        <label class="check"><input id="neutral" type="checkbox" checked>实验方案灰度保护</label>
+      </div>
+      <div>
+        <h2>对比设置</h2>
+        <div class="field"><label for="passes">迭代轮数</label><input id="passes" type="number" min="1" max="12" step="1" value="4"></div>
+        <div class="field"><label for="preview-mode">预览</label><select id="preview-mode"><option value="screen">屏幕色板</option><option value="ideal">标准四色</option></select></div>
+        <div class="field"><button id="all" type="button">全选</button><button id="defaults" type="button">默认选择</button></div>
+        <button id="export" type="button" disabled>导出对比 PNG</button>
+      </div>
+    </section>
+    <div class="runbar">
+      <button id="run" class="primary" type="button" disabled>转换所选算法</button>
+      <button id="cancel" type="button" disabled>取消</button>
+      <progress id="progress" max="100" value="0" aria-label="转换进度"></progress>
+      <p id="status" role="status" aria-live="polite">等待原图</p>
+    </div>
+    <p id="error" role="alert"></p>
+    <section id="results" class="grid" aria-label="算法对比">
+      <article class="tile"><div class="tile-head"><span class="tile-title">原图 · 当前选区</span><button id="original-export" type="button" disabled>PNG</button></div><canvas id="original" width="400" height="300" aria-label="原图选区"></canvas><div class="tile-foot"><span id="source-state">400 × 300</span><span id="crop-state">完整显示</span></div></article>
+    </section>
+    <section class="detail" aria-label="局部对比">
+      <div class="detail-head"><h2>局部对比</h2><div class="row"><select id="detail-a" aria-label="局部算法 A"></select><select id="detail-b" aria-label="局部算法 B"></select><label class="check">倍率<select id="detail-zoom"><option value="2">2×</option><option value="4" selected>4×</option><option value="8">8×</option></select></label></div></div>
+      <div class="detail-grid">
+        <figure><figcaption>原图</figcaption><canvas id="detail-source" width="400" height="300"></canvas></figure>
+        <figure><figcaption id="detail-name-a">算法 A</figcaption><canvas id="detail-canvas-a" width="400" height="300"></canvas></figure>
+        <figure><figcaption id="detail-name-b">算法 B</figcaption><canvas id="detail-canvas-b" width="400" height="300"></canvas></figure>
+      </div>
+    </section>
+    <footer>
+      <a href="https://perso.liris.cnrs.fr/victor.ostromoukhov/publications/pdf/SIGGRAPH01_varcoeffED.pdf" target="_blank" rel="noopener noreferrer">可变系数扩散研究</a>
+      <a href="https://cv.ulichney.com/papers/1993-void-cluster.pdf" target="_blank" rel="noopener noreferrer">Void-and-Cluster</a>
+      <a href="https://perso.liris.cnrs.fr/ostrom/publications/pdf/SIGGRAPH-ASIA09_saed.pdf" target="_blank" rel="noopener noreferrer">结构感知研究</a>
+      <a href="https://pubmed.ncbi.nlm.nih.gov/16370450/" target="_blank" rel="noopener noreferrer">Color DBS 研究</a>
+    </footer>
+  </main>
+  <script>
+    'use strict';
+    const W = 400, H = 300;
+    const IDEAL = [[0, 0, 0], [255, 255, 255], [255, 255, 0], [255, 0, 0]];
+    const ALGORITHMS = [
+      { id: 'legacy', name: '原有方案', tag: '加权 RGB / FS', selected: true },
+      { id: 'photo', name: '现有四色照片', tag: '现有映射 / 蛇形 FS', selected: true },
+      { id: 'smooth', name: '现有四色平滑', tag: '现有映射 / 蛇形 JJN', selected: false },
+      { id: 'perceptual', name: '感知四色扩散', tag: 'Lab 色域映射 / 向量 FS', selected: true },
+      { id: 'adaptive', name: '亮度自适应扩散', tag: '实验版 / 非原版 Ostromoukhov', selected: true },
+      { id: 'blue', name: '蓝噪声面积分配', tag: 'Void-and-Cluster / 四色比例', selected: true },
+      { id: 'structure', name: '结构自适应扩散', tag: '实验版 / 梯度方向保护', selected: true },
+      { id: 'iterative', name: '四色感知迭代', tag: '实验版 / 多尺度改色与交换', selected: true }
+    ];
+    const $ = id => document.getElementById(id);
+    const tiles = new Map(), outputs = new Map();
+    let source = null, fileName = 'image', loadRevision = 0, revision = 0;
+    let running = false, loading = false, activeWorker = null, workerUrl = null, mainCancelled = false;
+    let dirty = false, snapshot = null, runInfo = null, resultPalette = IDEAL.map(c => c.slice());
+    let transform = { rotation: 0, zoom: 1, x: 0, y: 0 };
+    let detailPoint = { x: W / 2, y: H / 2 };
+    const pointers = new Map();
+    let gesture = null;
+
+    for (const algorithm of ALGORITHMS) {
+      const tile = document.createElement('article');
+      tile.className = 'tile';
+      tile.innerHTML = `<div class="tile-head"><label class="tile-title algorithm-check"><input type="checkbox" ${algorithm.selected ? 'checked' : ''}><span>${algorithm.name}</span></label><button type="button" disabled>PNG</button></div><canvas width="400" height="300" aria-label="${algorithm.name}"></canvas><div class="tile-foot"><span>${algorithm.tag}</span><span class="elapsed">待转换</span></div>`;
+      $('results').append(tile);
+      const item = { root: tile, check: tile.querySelector('input'), canvas: tile.querySelector('canvas'),
+        button: tile.querySelector('button'), elapsed: tile.querySelector('.elapsed') };
+      tiles.set(algorithm.id, item);
+      item.check.addEventListener('change', controls);
+      item.button.addEventListener('click', () => saveCanvas(item.canvas, `${fileName}-${algorithm.id}.png`));
+      item.canvas.addEventListener('pointerdown', event => selectDetail(event, item.canvas));
+      for (const id of ['detail-a', 'detail-b']) {
+        const option = new Option(algorithm.name, algorithm.id);
+        $(id).add(option);
+      }
+    }
+    $('detail-a').value = 'photo';
+    $('detail-b').value = 'iterative';
+
+    function palette() {
+      return [0, 1, 2, 3].map(i => {
+        const hex = $(`ink-${i}`).value;
+        return [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16));
+      });
+    }
+
+    function controls() {
+      const locked = running || loading;
+      $('run').disabled = locked || !source || !ALGORITHMS.some(a => tiles.get(a.id).check.checked);
+      $('run').textContent = dirty ? '重新转换所选算法' : '转换所选算法';
+      $('cancel').disabled = !running;
+      $('export').disabled = locked || dirty || outputs.size === 0;
+      $('original-export').disabled = locked || !source;
+      for (const id of ['fit', 'rotate', 'reset', 'zoom', 'neutral', 'passes', 'palette-reset', 'all', 'defaults']) $(id).disabled = locked;
+      $('file').disabled = $('chart').disabled = running;
+      for (let i = 0; i < 4; i += 1) $(`ink-${i}`).disabled = locked;
+      for (const [id, tile] of tiles) {
+        tile.check.disabled = locked;
+        tile.button.disabled = locked || dirty || !outputs.has(id);
+      }
+      $('original').classList.toggle('drag', $('fit').value === 'manual');
+    }
+
+    function clearResults() {
+      outputs.clear();
+      snapshot = null;
+      runInfo = null;
+      dirty = !!source;
+      $('progress').value = 0;
+      for (const tile of tiles.values()) {
+        tile.canvas.getContext('2d').clearRect(0, 0, W, H);
+        tile.elapsed.textContent = '待转换';
+      }
+      controls();
+      drawDetails();
+    }
+
+    function invalidate() {
+      clearResults();
+      $('status').textContent = source ? '选区或设置已更新，待转换' : '等待原图';
+      $('error').textContent = '';
+    }
+
+    function sourceSize() { return [source.naturalWidth || source.width, source.naturalHeight || source.height]; }
+
+    function drawSource() {
+      const canvas = $('original'), context = canvas.getContext('2d', { willReadFrequently: true });
+      context.clearRect(0, 0, W, H);
+      if (!source) return;
+      const [width, height] = sourceSize();
+      const sideways = transform.rotation % 180 !== 0;
+      const ow = sideways ? height : width, oh = sideways ? width : height;
+      const manual = $('fit').value === 'manual';
+      const scale = ($('fit').value === 'contain' ? Math.min(W / ow, H / oh) : Math.max(W / ow, H / oh)) * (manual ? transform.zoom : 1);
+      const limitX = Math.max(0, (ow * scale - W) / 2), limitY = Math.max(0, (oh * scale - H) / 2);
+      transform.x = manual ? Math.max(-limitX, Math.min(limitX, transform.x)) : 0;
+      transform.y = manual ? Math.max(-limitY, Math.min(limitY, transform.y)) : 0;
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = 'high';
+      context.save();
+      context.translate(W / 2 + transform.x, H / 2 + transform.y);
+      context.rotate(transform.rotation * Math.PI / 180);
+      context.drawImage(source, -width * scale / 2, -height * scale / 2, width * scale, height * scale);
+      context.restore();
+      $('rotation').textContent = `${transform.rotation}°`;
+      $('zoom').value = transform.zoom;
+      $('zoom-value').textContent = `${transform.zoom.toFixed(2)}×`;
+      $('crop-state').textContent = $('fit').selectedOptions[0].textContent;
+      drawDetails();
+    }
+
+    function readSource() {
+      const context = $('original').getContext('2d');
+      const image = context.getImageData(0, 0, W, H);
+      const mask = new Uint8Array(W * H);
+      for (let p = 0; p < mask.length; p += 1) {
+        const i = p * 4, alpha = image.data[i + 3] / 255;
+        mask[p] = alpha > 0 ? 1 : 0;
+        for (let c = 0; c < 3; c += 1) image.data[i + c] = Math.round(image.data[i + c] * alpha + 255 * (1 - alpha));
+        image.data[i + 3] = 255;
+      }
+      return { pixels: image.data, mask };
+    }
+
+    function paintIndices(canvas, indices) {
+      const colors = $('preview-mode').value === 'ideal' ? IDEAL : resultPalette;
+      const context = canvas.getContext('2d');
+      const image = context.createImageData(W, H);
+      for (let p = 0; p < indices.length; p += 1) {
+        const color = colors[indices[p]];
+        image.data.set(color, p * 4);
+        image.data[p * 4 + 3] = 255;
+      }
+      context.putImageData(image, 0, 0);
+    }
+
+    function selectDetail(event, canvas) {
+      if (!source) return;
+      const rect = canvas.getBoundingClientRect();
+      detailPoint = { x: Math.max(0, Math.min(W, (event.clientX - rect.left) * W / rect.width)),
+        y: Math.max(0, Math.min(H, (event.clientY - rect.top) * H / rect.height)) };
+      drawDetails();
+    }
+
+    function drawDetails() {
+      const zoom = Number($('detail-zoom').value), width = W / zoom, height = H / zoom;
+      const x = Math.max(0, Math.min(W - width, detailPoint.x - width / 2));
+      const y = Math.max(0, Math.min(H - height, detailPoint.y - height / 2));
+      const pairs = [['detail-source', $('original')]];
+      for (const suffix of ['a', 'b']) {
+        const id = $(`detail-${suffix}`).value;
+        $(`detail-name-${suffix}`).textContent = ALGORITHMS.find(a => a.id === id).name;
+        pairs.push([`detail-canvas-${suffix}`, outputs.has(id) ? tiles.get(id).canvas : null]);
+      }
+      for (const [id, sourceCanvas] of pairs) {
+        const context = $(id).getContext('2d');
+        context.clearRect(0, 0, W, H);
+        context.imageSmoothingEnabled = false;
+        if (sourceCanvas) context.drawImage(sourceCanvas, x, y, width, height, 0, 0, W, H);
+      }
+    }
+
+    function saveCanvas(canvas, name) {
+      canvas.toBlob(blob => {
+        if (!blob) { $('error').textContent = 'PNG 生成失败。'; return; }
+        const url = URL.createObjectURL(blob), link = document.createElement('a');
+        link.href = url;
+        link.download = name;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      }, 'image/png');
+    }
+
+    // 文件头先行检查，限制解码前的像素规模；不读取路径或上传原图。
+    function dimensions(buffer) {
+      const bytes = new Uint8Array(buffer), view = new DataView(buffer);
+      const match = (offset, values) => offset + values.length <= bytes.length && values.every((v, i) => bytes[offset + i] === v);
+      if (bytes.length >= 33 && match(0, [137, 80, 78, 71, 13, 10, 26, 10]) && view.getUint32(8) === 13 && match(12, [73, 72, 68, 82])) return [view.getUint32(16), view.getUint32(20)];
+      if (match(0, [255, 216])) {
+        let offset = 2;
+        while (offset < bytes.length) {
+          if (bytes[offset++] !== 255) break;
+          while (offset < bytes.length && bytes[offset] === 255) offset += 1;
+          if (offset >= bytes.length) break;
+          const marker = bytes[offset++];
+          if ([0, 0xDA, 0xD9].includes(marker)) break;
+          if (marker === 1 || (marker >= 0xD0 && marker <= 0xD7)) continue;
+          if (offset + 2 > bytes.length) break;
+          const length = view.getUint16(offset);
+          if (length < 2 || offset + length > bytes.length) break;
+          if (marker >= 0xC0 && marker <= 0xCF && ![0xC4, 0xC8, 0xCC].includes(marker)) {
+            if (length < 8) break;
+            return [view.getUint16(offset + 5), view.getUint16(offset + 3)];
+          }
+          offset += length;
+        }
+      }
+      if (bytes.length >= 20 && match(0, [82, 73, 70, 70]) && match(8, [87, 69, 66, 80])) {
+        const end = view.getUint32(4, true) + 8;
+        if (end > bytes.length) throw new Error('WebP 文件不完整。');
+        const uint24 = i => bytes[i] + bytes[i + 1] * 256 + bytes[i + 2] * 65536;
+        for (let offset = 12; offset + 8 <= end;) {
+          const length = view.getUint32(offset + 4, true), start = offset + 8;
+          if (start + length > end) break;
+          if (match(offset, [86, 80, 56, 88]) && length >= 10) return [uint24(start + 4) + 1, uint24(start + 7) + 1];
+          if (match(offset, [86, 80, 56, 76]) && length >= 5 && bytes[start] === 47) {
+            const bits = view.getUint32(start + 1, true);
+            return [(bits & 0x3FFF) + 1, ((bits >>> 14) & 0x3FFF) + 1];
+          }
+          if (match(offset, [86, 80, 56, 32]) && length >= 10 && match(start + 3, [157, 1, 42])) return [view.getUint16(start + 6, true) & 0x3FFF, view.getUint16(start + 8, true) & 0x3FFF];
+          offset = start + length + (length & 1);
+        }
+      }
+      throw new Error('仅支持有效的 PNG、JPEG、WebP 图片。');
+    }
+
+    async function loadFile(file) {
+      if (!file || running) return;
+      const ticket = ++loadRevision;
+      loading = true;
+      controls();
+      $('error').textContent = '';
+      $('status').textContent = '读取原图';
+      let url = null;
+      try {
+        if (file.size > 10 * 1024 * 1024 || file.size === 0) throw new Error('文件需为 0～10 MiB 的有效图片。');
+        const [width, height] = dimensions(await file.arrayBuffer());
+        if (!width || !height || width > 8192 || height > 8192 || width * height > 16000000) throw new Error('原图限制：1600 万像素，任一边不超过 8192 像素。');
+        if (ticket !== loadRevision) return;
+        const image = new Image();
+        url = URL.createObjectURL(file);
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => { image.onload = image.onerror = null; image.src = ''; reject(new Error('原图解码超时。')); }, 15000);
+          image.onload = () => { clearTimeout(timer); image.onload = image.onerror = null; resolve(); };
+          image.onerror = () => { clearTimeout(timer); image.onload = image.onerror = null; reject(new Error('原图解码失败。')); };
+          image.src = url;
+        });
+        if (ticket !== loadRevision) { image.src = ''; return; }
+        if (!image.naturalWidth || image.naturalWidth * image.naturalHeight > 16000000 || Math.max(image.naturalWidth, image.naturalHeight) > 8192) throw new Error('解码后的图像尺寸超限。');
+        if (source instanceof HTMLImageElement) source.src = '';
+        source = image;
+        fileName = file.name.replace(/\.[^.]*$/, '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').slice(0, 80) || 'image';
+        $('file-info').textContent = `${file.name} · ${image.naturalWidth} × ${image.naturalHeight}`;
+        transform = { rotation: 0, zoom: 1, x: 0, y: 0 };
+        drawSource();
+        invalidate();
+      } catch (error) {
+        if (ticket === loadRevision) {
+          $('error').textContent = error.message;
+          $('status').textContent = source ? '新图读取失败，保留上一张图' : '读取失败';
+        }
+      } finally {
+        if (url) URL.revokeObjectURL(url);
+        if (ticket === loadRevision) { loading = false; controls(); }
+      }
+    }
+
+    function colorChart() {
+      if (running) return;
+      loadRevision += 1;
+      loading = false;
+      if (source instanceof HTMLImageElement) source.src = '';
+      const canvas = document.createElement('canvas');
+      canvas.width = 800; canvas.height = 600;
+      const c = canvas.getContext('2d');
+      const bands = [['#000', '#fff'], ['#000', '#f00'], ['#000', '#ff0'], ['#000', '#00f'], ['#000', '#0f0'], ['#231f20', '#dfad86']];
+      bands.forEach((colors, i) => { const g = c.createLinearGradient(0, 0, 800, 0); g.addColorStop(0, colors[0]); g.addColorStop(1, colors[1]); c.fillStyle = g; c.fillRect(0, i * 75, 800, 75); });
+      c.fillStyle = '#fff'; c.fillRect(0, 450, 800, 150);
+      for (let x = 0; x < 800; x += 2) { c.fillStyle = x % 4 === 0 ? '#000' : '#fff'; c.fillRect(x, 450, 2, 70); }
+      c.strokeStyle = '#000';
+      for (let i = 0; i < 20; i += 1) { c.beginPath(); c.moveTo(10 + i * 14, 590); c.lineTo(390 + i * 14, 525); c.stroke(); }
+      source = canvas; fileName = 'color-chart';
+      $('file').value = '';
+      $('file-info').textContent = '色阶 / 细线样张 · 800 × 600';
+      transform = { rotation: 0, zoom: 1, x: 0, y: 0 };
+      drawSource(); invalidate();
+    }
+
+    // Worker 和兼容回退共用一个完整引擎；所有实验只产生四色索引，不接触固件。
+    async function engine(job, emit, cancelled) {
+      const width = 400, height = 300, count = width * height;
+      const ideal = [[0, 0, 0], [255, 255, 255], [255, 255, 0], [255, 0, 0]];
+      const fs = [[1, 0, 7 / 16], [-1, 1, 3 / 16], [0, 1, 5 / 16], [1, 1, 1 / 16]];
+      const jjn = [[1, 0, 7 / 48], [2, 0, 5 / 48], [-2, 1, 3 / 48], [-1, 1, 5 / 48], [0, 1, 7 / 48], [1, 1, 5 / 48], [2, 1, 3 / 48], [-2, 2, 1 / 48], [-1, 2, 3 / 48], [0, 2, 5 / 48], [1, 2, 3 / 48], [2, 2, 1 / 48]];
+      let currentId = '', algorithmIndex = 0;
+      async function tick(fraction, label) {
+        if (cancelled()) throw new Error('cancelled');
+        emit({ type: 'progress', id: currentId, progress: (algorithmIndex + fraction) * 100 / job.algorithms.length, label });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (cancelled()) throw new Error('cancelled');
+      }
+      const decode = value => { const v = value / 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; };
+      const table = Float64Array.from({ length: 256 }, (_, i) => decode(i));
+      const inks = job.palette.map(color => color.map(decode));
+      const luminance = rgb => .2126729 * rgb[0] + .7151522 * rgb[1] + .072175 * rgb[2];
+      function lab(r, g, b) {
+        const f = t => t > 216 / 24389 ? Math.cbrt(t) : (24389 / 27 * t + 16) / 116;
+        const x = f((.4124564 * r + .3575761 * g + .1804375 * b) / .95047);
+        const y = f(.2126729 * r + .7151522 * g + .072175 * b);
+        const z = f((.0193339 * r + .119192 * g + .9503041 * b) / 1.08883);
+        return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
+      }
+      const inkLab = inks.map(c => lab(...c));
+      const distance = (a, b) => 1.8 * (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
+      function nearest(rgb, neutral = false) {
+        const value = lab(...rgb);
+        let best = 0, error = Infinity;
+        for (let i = 0; i < (neutral ? 2 : 4); i += 1) {
+          const d = distance(value, inkLab[i]);
+          if (d < error) { error = d; best = i; }
+        }
+        return best;
+      }
+      function mix(weights) {
+        const out = [0, 0, 0];
+        for (let i = 0; i < 4; i += 1) for (let c = 0; c < 3; c += 1) out[c] += weights[i] * inks[i][c];
+        return out;
+      }
+
+      let lut = null, targets = null, weights = null, neutrals = null, edges = null;
+      async function prepareMapping() {
+        if (targets) return;
+        const mixtures = [];
+        // 在固定四色的面积比例单纯形中搜索，禁止自定义出屏幕不存在的第五种墨色。
+        for (let a = 0; a <= 12; a += 1) for (let b = 0; b <= 12 - a; b += 1) for (let c = 0; c <= 12 - a - b; c += 1) {
+          const w = [a / 12, b / 12, c / 12, (12 - a - b - c) / 12];
+          const color = mix(w);
+          mixtures.push({ w, rgb: color, lab: lab(...color) });
+        }
+        lut = new Float32Array(17 * 17 * 17 * 4);
+        for (let r = 0; r < 17; r += 1) {
+          for (let g = 0; g < 17; g += 1) for (let b = 0; b < 17; b += 1) {
+            const target = lab(decode(r * 255 / 16), decode(g * 255 / 16), decode(b * 255 / 16));
+            let best = mixtures[0], error = Infinity;
+            for (const candidate of mixtures) {
+              const e = distance(target, candidate.lab);
+              if (e < error) { error = e; best = candidate; }
+            }
+            let w = best.w.slice();
+            for (const step of [1 / 24, 1 / 48, 1 / 96, 1 / 192]) {
+              let improved = w;
+              for (let from = 0; from < 4; from += 1) for (let to = 0; to < 4; to += 1) {
+                if (from === to || w[from] < step) continue;
+                const trial = w.slice(); trial[from] -= step; trial[to] += step;
+                const e = distance(target, lab(...mix(trial)));
+                if (e < error) { error = e; improved = trial; }
+              }
+              w = improved;
+            }
+            lut.set(w, ((r * 17 + g) * 17 + b) * 4);
+          }
+          await tick(r / 17 * .15, '建立感知色域映射');
+        }
+        weights = new Float32Array(count * 4);
+        targets = new Float32Array(count * 3);
+        neutrals = new Uint8Array(count);
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            const p = y * width + x, i = p * 4;
+            if (!job.mask[p]) { weights[i + 1] = 1; targets.set(inks[1], p * 3); neutrals[p] = 1; continue; }
+            const rgb = [job.pixels[i], job.pixels[i + 1], job.pixels[i + 2]];
+            const targetLab = lab(table[rgb[0]], table[rgb[1]], table[rgb[2]]);
+            const neutral = job.neutral && Math.hypot(targetLab[1], targetLab[2]) < 10;
+            neutrals[p] = neutral ? 1 : 0;
+            if (neutral) {
+              let low = 0, high = 1;
+              // 黑白线上的一维最小化也使用实际色板，不假定纸白是纯白。
+              const evaluate = t => distance(targetLab, lab(...inks[0].map((v, c) => v * (1 - t) + inks[1][c] * t)));
+              for (let j = 0; j < 16; j += 1) {
+                const a = (2 * low + high) / 3, b = (low + 2 * high) / 3;
+                if (evaluate(a) < evaluate(b)) high = b; else low = a;
+              }
+              let t = (low + high) / 2;
+              const error = evaluate(t);
+              if (evaluate(0) <= error) t = 0;
+              if (evaluate(1) <= evaluate(t)) t = 1;
+              weights[i] = 1 - t; weights[i + 1] = t;
+            } else {
+              const pos = rgb.map(v => v * 16 / 255), base = pos.map(v => Math.min(15, Math.floor(v)));
+              const frac = pos.map((v, c) => v - base[c]);
+              for (let dr = 0; dr < 2; dr += 1) for (let dg = 0; dg < 2; dg += 1) for (let db = 0; db < 2; db += 1) {
+                const factor = (dr ? frac[0] : 1 - frac[0]) * (dg ? frac[1] : 1 - frac[1]) * (db ? frac[2] : 1 - frac[2]);
+                const offset = (((base[0] + dr) * 17 + base[1] + dg) * 17 + base[2] + db) * 4;
+                for (let c = 0; c < 4; c += 1) weights[i + c] += lut[offset + c] * factor;
+              }
+            }
+            for (let color = 0; color < 4; color += 1) for (let c = 0; c < 3; c += 1) targets[p * 3 + c] += weights[i + color] * inks[color][c];
+          }
+          if ((y & 15) === 15) await tick(.15 + y / height * .1, '映射原图颜色');
+        }
+        edges = new Float32Array(count * 3);
+        for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+          const p = y * width + x;
+          const value = (xx, yy) => {
+            const i = (Math.max(0, Math.min(height - 1, yy)) * width + Math.max(0, Math.min(width - 1, xx))) * 3;
+            return .2126729 * targets[i] + .7151522 * targets[i + 1] + .072175 * targets[i + 2];
+          };
+          const dx = (value(x + 1, y) - value(x - 1, y)) / 2, dy = (value(x, y + 1) - value(x, y - 1)) / 2;
+          edges.set([dx, dy, Math.min(1, Math.hypot(dx, dy) * 5)], p * 3);
+        }
+      }
+
+      async function baseline(id) {
+        const output = new Uint8Array(count);
+        const errors = Array.from({ length: 3 }, () => new Float32Array(width * 3));
+        const kernel = id === 'smooth' ? jjn : fs;
+        for (let y = 0; y < height; y += 1) {
+          const direction = id === 'legacy' || !(y & 1) ? 1 : -1;
+          for (let step = 0; step < width; step += 1) {
+            const x = direction === 1 ? step : width - 1 - step, p = y * width + x, i = p * 4;
+            let r = job.pixels[i], g = job.pixels[i + 1], b = job.pixels[i + 2], neutral = false;
+            if (!job.mask[p] && id !== 'legacy') { output[p] = 1; continue; }
+            if (id !== 'legacy') {
+              const light = .299 * r + .587 * g + .114 * b;
+              if (r < g) { const m = (.299 * r + .587 * g) / .886; if (m < b) r = g = b = light; else r = g = m; }
+              else if (g < b) { const m = (.587 * g + .114 * b) / .701; if (r < m) r = g = b = light; else g = b = m; }
+              neutral = r - b < 12;
+              if (neutral) r = g = b = light;
+            }
+            const rgb = [r, g, b].map((v, c) => v + errors[0][x * 3 + c]);
+            if (id === 'legacy') for (let c = 0; c < 3; c += 1) rgb[c] = Math.max(0, Math.min(255, rgb[c]));
+            let best = 0, error = Infinity;
+            if (neutral) { const gray = .299 * rgb[0] + .587 * rgb[1] + .114 * rgb[2]; rgb.fill(gray); best = gray > 127.5 ? 1 : 0; }
+            else for (let color = 0; color < 4; color += 1) {
+              const e = .299 * (rgb[0] - ideal[color][0]) ** 2 + .587 * (rgb[1] - ideal[color][1]) ** 2 + .114 * (rgb[2] - ideal[color][2]) ** 2;
+              if (e < error) { error = e; best = color; }
+            }
+            output[p] = best;
+            for (const [dx, dy, weight] of kernel) {
+              const xx = x + direction * dx;
+              if (xx < 0 || xx >= width || y + dy >= height) continue;
+              for (let c = 0; c < 3; c += 1) errors[dy][xx * 3 + c] += (rgb[c] - ideal[best][c]) * weight;
+            }
+          }
+          const old = errors.shift(); old.fill(0); errors.push(old);
+          if ((y & 15) === 15) await tick(y / height, '转换');
+        }
+        return output;
+      }
+
+      async function diffuse(id) {
+        const out = new Uint8Array(count);
+        const errors = [new Float32Array(width * 3), new Float32Array(width * 3)];
+        for (let y = 0; y < height; y += 1) {
+          const direction = (y & 1) ? -1 : 1;
+          for (let step = 0; step < width; step += 1) {
+            const x = direction === 1 ? step : width - 1 - step, p = y * width + x;
+            if (!job.mask[p]) { out[p] = 1; continue; }
+            let rgb = [0, 1, 2].map(c => targets[p * 3 + c] + errors[0][x * 3 + c]);
+            if (neutrals[p]) {
+              const delta = inks[1].map((v, c) => v - inks[0][c]);
+              const denominator = delta.reduce((sum, v) => sum + v * v, 0);
+              const t = denominator > 1e-12 ? delta.reduce((sum, v, c) => sum + v * (rgb[c] - inks[0][c]), 0) / denominator : 0;
+              rgb = inks[0].map((v, c) => v + t * delta[c]);
+            }
+            const best = nearest(rgb, !!neutrals[p]); out[p] = best;
+            let kernel = fs;
+            if (id === 'adaptive') {
+              // 实验性连续变系数，不冒用论文的优化系数表或质量结论。
+              const t = Math.max(0, Math.min(1, luminance(rgb))), extreme = Math.abs(t - .5) * 2;
+              const forward = .40 + .20 * extreme, diagonal = .28 - .10 * extreme;
+              kernel = [[1, 0, forward], [-1, 1, diagonal], [0, 1, 1 - forward - diagonal]];
+            }
+            let total = 0;
+            const neighbors = [];
+            for (const [dx, dy, weight] of kernel) {
+              const xx = x + direction * dx, yy = y + dy;
+              if (xx < 0 || xx >= width || yy >= height || !job.mask[yy * width + xx]) continue;
+              let w = weight;
+              if (id === 'structure') {
+                const q = yy * width + xx, strength = edges[p * 3 + 2];
+                const difference = Math.abs(luminance([targets[q * 3], targets[q * 3 + 1], targets[q * 3 + 2]]) - luminance([targets[p * 3], targets[p * 3 + 1], targets[p * 3 + 2]]));
+                const norm = Math.hypot(edges[p * 3], edges[p * 3 + 1]) * Math.hypot(dx, dy);
+                const crossing = norm > 1e-8 ? Math.abs(edges[p * 3] * direction * dx + edges[p * 3 + 1] * dy) / norm : 0;
+                w *= Math.exp(-difference * 10) * (1 - .75 * strength * crossing);
+              }
+              total += w; neighbors.push([xx, dy, w]);
+            }
+            // 只在结构模式中归一化方向权重，保留 FS 基准原有的边缘行为。
+            const normalizer = id === 'structure' && total > 1e-9 ? 1 / total : 1;
+            for (const [xx, dy, weight] of neighbors) for (let c = 0; c < 3; c += 1) errors[dy][xx * 3 + c] += (rgb[c] - inks[best][c]) * weight * normalizer;
+          }
+          const old = errors.shift(); old.fill(0); errors.push(old);
+          if ((y & 15) === 15) await tick(.25 + y / height * (id === 'iterative' ? .15 : .75), '向量误差扩散');
+        }
+        return out;
+      }
+
+      async function blueNoise() {
+        const size = 64, n = size * size, pattern = new Uint8Array(n), density = new Float64Array(n), rank = new Uint16Array(n);
+        let random = 0x796684;
+        const rng = () => { random ^= random << 13; random ^= random >>> 17; random ^= random << 5; return (random >>> 0) / 4294967296; };
+        const order = Array.from({ length: n }, (_, i) => i);
+        for (let i = n - 1; i > 0; i -= 1) { const j = Math.floor(rng() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+        const footprint = [];
+        for (let dy = -5; dy <= 5; dy += 1) for (let dx = -5; dx <= 5; dx += 1) footprint.push([dx, dy, Math.exp(-(dx * dx + dy * dy) / (2 * 1.5 * 1.5))]);
+        function change(p, on) {
+          pattern[p] = on ? 1 : 0;
+          const x = p % size, y = Math.floor(p / size), sign = on ? 1 : -1;
+          for (const [dx, dy, value] of footprint) density[((y + dy + size) % size) * size + (x + dx + size) % size] += sign * value;
+        }
+        function pick(on) {
+          let best = -1, value = on ? -Infinity : Infinity;
+          for (let i = 0; i < n; i += 1) if (pattern[i] === (on ? 1 : 0) && (on ? density[i] > value : density[i] < value)) { best = i; value = density[i]; }
+          return best;
+        }
+        for (let i = 0; i < n / 2; i += 1) change(order[i], true);
+        // 有界 Void-and-Cluster 松弛；固定种子使重复转换能直接比较。
+        for (let iteration = 0; iteration < 2048; iteration += 1) {
+          const cluster = pick(true); change(cluster, false);
+          const empty = pick(false); change(empty, true);
+          if (cluster === empty) break;
+          if ((iteration & 127) === 127) await tick(.25 + iteration / 2048 * .15, '蓝噪声松弛');
+        }
+        const initial = pattern.slice();
+        for (let value = n / 2 - 1; value >= 0; value -= 1) {
+          const p = pick(true); rank[p] = value; change(p, false);
+          if ((value & 127) === 0) await tick(.4 + (n / 2 - value) / n * .4, '生成蓝噪声阈值');
+        }
+        pattern.fill(0); density.fill(0);
+        for (let p = 0; p < n; p += 1) if (initial[p]) change(p, true);
+        for (let value = n / 2; value < n; value += 1) {
+          const p = pick(false); rank[p] = value; change(p, true);
+          if ((value & 127) === 0) await tick(.6 + (value - n / 2) / n * .4, '生成蓝噪声阈值');
+        }
+        const out = new Uint8Array(count);
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            const p = y * width + x;
+            if (!job.mask[p]) { out[p] = 1; continue; }
+            const threshold = (rank[(y % size) * size + x % size] + .5) / n;
+            let sum = 0, best = 3;
+            for (let color = 0; color < 4; color += 1) { sum += weights[p * 4 + color]; if (threshold < sum) { best = color; break; } }
+            out[p] = best;
+          }
+          if ((y & 15) === 15) await tick(.8 + y / height * .2, '四色面积分配');
+        }
+        return out;
+      }
+
+      async function optimize(out) {
+        // 两个空间尺度的视觉误差 + 较弱的边缘点误差；不宣称复现原版 Color DBS。
+        const opponent = rgb => { const y = luminance(rgb); return [2 * y, .6 * (rgb[0] - y), .6 * (rgb[2] - y)]; };
+        const colors = inks.map(opponent), target = new Float64Array(count * 3), residual = new Float64Array(count * 3);
+        const pointWeight = new Float64Array(count);
+        for (let p = 0; p < count; p += 1) {
+          target.set(opponent([targets[p * 3], targets[p * 3 + 1], targets[p * 3 + 2]]), p * 3);
+          for (let c = 0; c < 3; c += 1) residual[p * 3 + c] = colors[out[p]][c] - target[p * 3 + c];
+          pointWeight[p] = .02 + .10 * edges[p * 3 + 2];
+        }
+        const models = [];
+        for (const [one, factor] of [[[.25, .5, .25], .65], [[1 / 16, 4 / 16, 6 / 16, 4 / 16, 1 / 16], .35]]) {
+          const radius = (one.length - 1) / 2, kernel = [];
+          for (let dy = -radius; dy <= radius; dy += 1) for (let dx = -radius; dx <= radius; dx += 1) kernel.push([dx, dy, one[dx + radius] * one[dy + radius]]);
+          const filtered = new Float64Array(residual.length);
+          for (let y = 0; y < height; y += 1) {
+            for (let x = 0; x < width; x += 1) for (const [dx, dy, k] of kernel) {
+              const xx = x + dx, yy = y + dy;
+              if (xx < 0 || xx >= width || yy < 0 || yy >= height) continue;
+              const p = (y * width + x) * 3, q = (yy * width + xx) * 3;
+              for (let c = 0; c < 3; c += 1) filtered[p + c] += residual[q + c] * k;
+            }
+            if ((y & 31) === 31) await tick(.4, '建立多尺度误差');
+          }
+          models.push({ kernel, factor, filtered, one, radius });
+        }
+        function gradient(p) {
+          const x = p % width, y = Math.floor(p / width), g = [0, 0, 0];
+          let hessian = pointWeight[p];
+          for (let c = 0; c < 3; c += 1) g[c] = residual[p * 3 + c] * pointWeight[p];
+          for (const model of models) for (const [dx, dy, k] of model.kernel) {
+            const xx = x + dx, yy = y + dy;
+            if (xx < 0 || xx >= width || yy < 0 || yy >= height) continue;
+            const i = (yy * width + xx) * 3;
+            hessian += model.factor * k * k;
+            for (let c = 0; c < 3; c += 1) g[c] += model.factor * k * model.filtered[i + c];
+          }
+          return { g, hessian };
+        }
+        function apply(p, delta) {
+          const x = p % width, y = Math.floor(p / width);
+          for (let c = 0; c < 3; c += 1) residual[p * 3 + c] += delta[c];
+          for (const model of models) for (const [dx, dy, k] of model.kernel) {
+            const xx = x + dx, yy = y + dy;
+            if (xx < 0 || xx >= width || yy < 0 || yy >= height) continue;
+            const i = (yy * width + xx) * 3;
+            for (let c = 0; c < 3; c += 1) model.filtered[i + c] += delta[c] * k;
+          }
+        }
+        function cross(p, q) {
+          const px = p % width, py = Math.floor(p / width), qx = q % width, qy = Math.floor(q / width);
+          let value = 0;
+          for (const model of models) for (const [dx, dy, k] of model.kernel) {
+            const xx = px + dx, yy = py + dy, qdx = xx - qx, qdy = yy - qy;
+            if (xx < 0 || xx >= width || yy < 0 || yy >= height || Math.abs(qdx) > model.radius || Math.abs(qdy) > model.radius) continue;
+            value += model.factor * k * model.one[qdx + model.radius] * model.one[qdy + model.radius];
+          }
+          return value;
+        }
+        const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        for (let pass = 0; pass < job.passes; pass += 1) {
+          let changes = 0;
+          for (let row = 0; row < height; row += 1) {
+            const y = pass & 1 ? height - 1 - row : row, direction = (y + pass) & 1 ? -1 : 1;
+            for (let step = 0; step < width; step += 1) {
+              const x = direction === 1 ? step : width - 1 - step, p = y * width + x;
+              if (!job.mask[p]) continue;
+              const before = out[p], gp = gradient(p);
+              let best = before, minimum = -1e-11, deltaBest = null;
+              for (let color = 0; color < (neutrals[p] ? 2 : 4); color += 1) {
+                if (color === before) continue;
+                const delta = colors[color].map((v, c) => v - colors[before][c]);
+                const change = 2 * dot(delta, gp.g) + dot(delta, delta) * gp.hessian;
+                if (change < minimum) { minimum = change; best = color; deltaBest = delta; }
+              }
+              if (best !== before) { apply(p, deltaBest); out[p] = best; changes += 1; }
+              // 交换保持局部墨色数量，改善只靠单点改色难以移动的颗粒。
+              const xx = x + (pass & 1 ? 0 : direction), yy = y + (pass & 1 ? 1 : 0);
+              if ((x & 1) || xx < 0 || xx >= width || yy >= height) continue;
+              const q = yy * width + xx;
+              if (!job.mask[q] || out[p] === out[q] || (neutrals[p] && out[q] > 1) || (neutrals[q] && out[p] > 1)) continue;
+              const ga = gradient(p), gb = gradient(q), delta = colors[out[q]].map((v, c) => v - colors[out[p]][c]);
+              const difference = ga.g.map((v, c) => v - gb.g[c]);
+              const change = 2 * dot(delta, difference) + dot(delta, delta) * (ga.hessian + gb.hessian - 2 * cross(p, q));
+              if (change < -1e-11) {
+                apply(p, delta); apply(q, delta.map(v => -v));
+                [out[p], out[q]] = [out[q], out[p]]; changes += 1;
+              }
+            }
+            if ((row & 7) === 7) await tick(.4 + (pass + row / height) / job.passes * .6, `迭代 ${pass + 1} / ${job.passes}`);
+          }
+          emit({ type: 'partial', id: 'iterative', indices: out.slice(), pass: pass + 1, changes });
+          if (changes === 0) break;
+        }
+        return out;
+      }
+
+      for (let index = 0; index < job.algorithms.length; index += 1) {
+        currentId = job.algorithms[index]; algorithmIndex = index;
+        const started = performance.now();
+        await tick(0, '开始转换');
+        let out;
+        if (['legacy', 'photo', 'smooth'].includes(currentId)) out = await baseline(currentId);
+        else {
+          await prepareMapping();
+          if (currentId === 'blue') out = await blueNoise();
+          else { out = await diffuse(currentId); if (currentId === 'iterative') out = await optimize(out); }
+        }
+        emit({ type: 'result', id: currentId, indices: out, milliseconds: performance.now() - started });
+        await tick(1, '完成');
+      }
+      emit({ type: 'done' });
+    }
+
+    function cancelRun() {
+      if (!running) return;
+      revision += 1; mainCancelled = true;
+      if (activeWorker) activeWorker.terminate();
+      activeWorker = null;
+      if (workerUrl) URL.revokeObjectURL(workerUrl);
+      workerUrl = null; running = false;
+      $('status').textContent = '已取消 · 保留当前结果';
+      controls();
+    }
+
+    async function run() {
+      if (running || loading || !source) return;
+      const algorithms = ALGORITHMS.filter(a => tiles.get(a.id).check.checked).map(a => a.id);
+      if (!algorithms.length) return;
+      const passes = Number($('passes').value);
+      if (!Number.isInteger(passes) || passes < 1 || passes > 12) { $('error').textContent = '迭代轮数需为 1～12 的整数。'; return; }
+      const colors = palette();
+      const light = c => .2126 * c[0] + .7152 * c[1] + .0722 * c[2];
+      if (light(colors[1]) <= light(colors[0]) + 10 || colors.some((c, i) => colors.some((d, j) => i !== j && c.every((v, k) => v === d[k])))) {
+        $('error').textContent = '白色需明显亮于黑色，四色值不能重复。'; return;
+      }
+      clearResults();
+      snapshot = readSource(); resultPalette = colors.map(c => c.slice());
+      dirty = false; running = true; mainCancelled = false;
+      const ticket = ++revision;
+      $('error').textContent = ''; controls();
+      const job = { ...snapshot, palette: colors, algorithms, passes, neutral: $('neutral').checked };
+      runInfo = { passes, neutral: job.neutral, fit: $('fit').selectedOptions[0].textContent,
+        rotation: transform.rotation, zoom: transform.zoom };
+      function receive(message) {
+        if (ticket !== revision) return;
+        if (message.type === 'progress') {
+          $('progress').value = Math.max(Number($('progress').value), Math.min(100, message.progress));
+          const algorithm = ALGORITHMS.find(a => a.id === message.id);
+          $('status').textContent = `${algorithm ? algorithm.name : ''} · ${message.label}`;
+        } else if (message.type === 'result' || message.type === 'partial') {
+          if (!(message.indices instanceof Uint8Array) || message.indices.length !== W * H || message.indices.some(v => v > 3)) throw new Error('算法返回了无效的四色索引。');
+          outputs.set(message.id, message.indices);
+          paintIndices(tiles.get(message.id).canvas, message.indices);
+          tiles.get(message.id).elapsed.textContent = message.type === 'partial' ? `第 ${message.pass} 轮 · ${message.changes} 处调整` : `${(message.milliseconds / 1000).toFixed(2)} s`;
+          drawDetails();
+        } else if (message.type === 'error') {
+          throw new Error(message.message || '转换失败。');
+        } else if (message.type === 'done') {
+          running = false; $('progress').value = 100;
+          $('status').textContent = `${outputs.size} 种算法已完成`;
+          if (activeWorker) activeWorker.terminate(); activeWorker = null;
+          if (workerUrl) URL.revokeObjectURL(workerUrl); workerUrl = null;
+          controls();
+        }
+      }
+      function failed(error) {
+        if (ticket !== revision) return;
+        if (activeWorker) activeWorker.terminate(); activeWorker = null;
+        if (workerUrl) URL.revokeObjectURL(workerUrl); workerUrl = null;
+        running = false;
+        $('error').textContent = error.message || '转换失败。';
+        $('status').textContent = '转换中断 · 保留已完成结果'; controls();
+      }
+      try {
+        // file:// 下使用 Blob Worker；浏览器禁用 Worker 时才进入同代码的分段回退。
+        let started = false;
+        let workerResponded = false;
+        async function fallback() {
+          if (ticket !== revision) return;
+          if (activeWorker) { activeWorker.onmessage = activeWorker.onerror = activeWorker.onmessageerror = null; activeWorker.terminate(); }
+          activeWorker = null;
+          if (workerUrl) URL.revokeObjectURL(workerUrl); workerUrl = null;
+          try { await engine(job, receive, () => mainCancelled || ticket !== revision); }
+          catch (error) { if (error.message !== 'cancelled') failed(error); }
+        }
+        try {
+          const code = `'use strict'; const engine = ${engine.toString()}; self.onmessage = event => engine(event.data, message => self.postMessage(message), () => false).catch(error => self.postMessage({type:'error',message:error.message}));`;
+          workerUrl = URL.createObjectURL(new Blob([code], { type: 'application/javascript' }));
+          activeWorker = new Worker(workerUrl);
+          activeWorker.onmessage = event => { workerResponded = true; try { receive(event.data); } catch (error) { failed(error); } };
+          activeWorker.onerror = event => {
+            event.preventDefault();
+            if (!workerResponded) fallback();
+            else failed(new Error('Worker 执行失败，当前结果已保留。'));
+          };
+          activeWorker.onmessageerror = () => failed(new Error('Worker 结果传输失败。'));
+          activeWorker.postMessage(job); started = true;
+        } catch (error) {
+          if (activeWorker) activeWorker.terminate(); activeWorker = null;
+          if (workerUrl) URL.revokeObjectURL(workerUrl); workerUrl = null;
+        }
+        if (!started) await fallback();
+      } catch (error) { if (error.message !== 'cancelled') failed(error); }
+    }
+
+    $('file').addEventListener('change', event => loadFile(event.target.files[0]));
+    $('chart').addEventListener('click', colorChart);
+    $('run').addEventListener('click', run);
+    $('cancel').addEventListener('click', cancelRun);
+    $('fit').addEventListener('change', () => { transform.zoom = 1; transform.x = transform.y = 0; drawSource(); invalidate(); });
+    $('rotate').addEventListener('click', () => { transform.rotation = (transform.rotation + 90) % 360; transform.x = transform.y = 0; drawSource(); invalidate(); });
+    $('reset').addEventListener('click', () => { transform = { rotation: 0, zoom: 1, x: 0, y: 0 }; drawSource(); invalidate(); });
+    $('zoom').addEventListener('input', () => { $('fit').value = 'manual'; transform.zoom = Number($('zoom').value); drawSource(); invalidate(); });
+    for (let i = 0; i < 4; i += 1) $(`ink-${i}`).addEventListener('input', () => { $('palette-state').textContent = '手动色板 · 未验证测量精度'; invalidate(); });
+    $('palette-reset').addEventListener('click', () => { ['#000000', '#ffffff', '#ffff00', '#ff0000'].forEach((v, i) => { $(`ink-${i}`).value = v; }); $('palette-state').textContent = '理想值 · 非实测'; invalidate(); });
+    $('neutral').addEventListener('change', invalidate);
+    $('passes').addEventListener('change', invalidate);
+    $('preview-mode').addEventListener('change', () => { for (const [id, indices] of outputs) paintIndices(tiles.get(id).canvas, indices); drawDetails(); });
+    $('all').addEventListener('click', () => { for (const tile of tiles.values()) tile.check.checked = true; controls(); });
+    $('defaults').addEventListener('click', () => { for (const a of ALGORITHMS) tiles.get(a.id).check.checked = a.selected; controls(); });
+    for (const id of ['detail-a', 'detail-b', 'detail-zoom']) $(id).addEventListener('change', drawDetails);
+    $('original-export').addEventListener('click', () => {
+      const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+      const context = canvas.getContext('2d'); context.fillStyle = '#fff'; context.fillRect(0, 0, W, H); context.drawImage($('original'), 0, 0);
+      saveCanvas(canvas, `${fileName}-source.png`);
+    });
+    $('export').addEventListener('click', () => {
+      const rows = ALGORITHMS.filter(a => outputs.has(a.id));
+      const entries = [{ name: '原图 · 当前选区', tag: '', canvas: $('original') }, ...rows.map(a => ({ name: a.name, tag: a.tag, canvas: tiles.get(a.id).canvas }))];
+      const canvas = document.createElement('canvas'), columns = 3, cellWidth = 424, cellHeight = 350;
+      canvas.width = columns * cellWidth; canvas.height = 92 + Math.ceil(entries.length / columns) * cellHeight;
+      const context = canvas.getContext('2d'); context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = '#202624'; context.font = '20px "Microsoft YaHei", sans-serif'; context.fillText('四色图像对比 · 400 × 300', 12, 28);
+      context.font = '12px "Microsoft YaHei", sans-serif';
+      context.fillText(`色板：${resultPalette.map(c => '#' + c.map(v => v.toString(16).padStart(2, '0')).join('')).join(' / ')} · 预览：${$('preview-mode').selectedOptions[0].textContent}`, 12, 50);
+      context.fillText(`灰度保护：${runInfo.neutral ? '开' : '关'} · 迭代上限：${runInfo.passes} 轮 · ${runInfo.fit} · ${runInfo.rotation}° · ${runInfo.zoom.toFixed(2)}×`, 12, 72);
+      entries.forEach((entry, i) => {
+        const x = i % columns * cellWidth + 12, y = 92 + Math.floor(i / columns) * cellHeight;
+        context.fillStyle = '#202624'; context.font = '16px "Microsoft YaHei", sans-serif'; context.fillText(entry.name, x, y + 20);
+        context.drawImage(entry.canvas, x, y + 32, W, H); context.strokeStyle = '#d3dcd6'; context.strokeRect(x, y + 32, W, H);
+        context.fillStyle = '#617068'; context.font = '11px "Microsoft YaHei", sans-serif'; context.fillText(entry.tag, x, y + 346);
+      });
+      saveCanvas(canvas, `${fileName}-comparison.png`);
+    });
+
+    const canvas = $('original');
+    function rebaseGesture() {
+      const values = [...pointers.values()];
+      if (values.length === 0) { gesture = null; return; }
+      const a = values[0], b = values[1] || a;
+      gesture = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, panX: transform.x, panY: transform.y,
+        distance: Math.hypot(a.x - b.x, a.y - b.y), zoom: transform.zoom };
+    }
+    canvas.addEventListener('pointerdown', event => {
+      if (running || loading || !source || (event.pointerType === 'mouse' && event.button !== 0)) return;
+      selectDetail(event, canvas);
+      if ($('fit').value !== 'manual') return;
+      event.preventDefault(); canvas.setPointerCapture(event.pointerId);
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      rebaseGesture();
+    });
+    canvas.addEventListener('pointermove', event => {
+      if (running || loading || !source) return;
+      if (!pointers.has(event.pointerId)) { if (event.buttons === 0) selectDetail(event, canvas); return; }
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const rect = canvas.getBoundingClientRect();
+      if (gesture) {
+        const values = [...pointers.values()], a = values[0], b = values[1] || a;
+        const centerX = (a.x + b.x) / 2, centerY = (a.y + b.y) / 2;
+        if (values.length > 1 && gesture.distance > 0) transform.zoom = Math.max(1, Math.min(8, gesture.zoom * Math.hypot(a.x - b.x, a.y - b.y) / gesture.distance));
+        const ratio = transform.zoom / gesture.zoom;
+        transform.x = (centerX - rect.left) * W / rect.width - W / 2 - ((gesture.x - rect.left) * W / rect.width - W / 2 - gesture.panX) * ratio;
+        transform.y = (centerY - rect.top) * H / rect.height - H / 2 - ((gesture.y - rect.top) * H / rect.height - H / 2 - gesture.panY) * ratio;
+      }
+      drawSource(); invalidate();
+    });
+    function releasePointer(event) {
+      pointers.delete(event.pointerId);
+      rebaseGesture();
+    }
+    canvas.addEventListener('pointerup', releasePointer);
+    canvas.addEventListener('pointercancel', releasePointer);
+    canvas.addEventListener('lostpointercapture', releasePointer);
+    canvas.addEventListener('wheel', event => {
+      if (running || loading || !source || $('fit').value !== 'manual') return;
+      event.preventDefault(); transform.zoom = Math.max(1, Math.min(8, transform.zoom * Math.exp(-event.deltaY * .001)));
+      drawSource(); invalidate();
+    }, { passive: false });
+    window.addEventListener('pagehide', () => { cancelRun(); loadRevision += 1; });
+    controls(); drawDetails();
+  </script>
+</body>
+</html>

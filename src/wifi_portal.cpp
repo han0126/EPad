@@ -29,6 +29,7 @@
 // PlatformIO 将独立 HTML 文件直接嵌入固件，无需上传文件系统。
 extern const uint8_t WIFI_SETUP_HTML[] asm("_binary_web_wifi_setup_html_start");
 extern const uint8_t IMAGE_TOOLS_JS[] asm("_binary_web_image_tools_js_start");
+extern const uint8_t IMAGE_ALGORITHMS_JS[] asm("_binary_web_image_algorithms_js_start");
 extern const uint8_t IMAGE_CROPPER_JS[] asm("_binary_web_image_cropper_js_start");
 extern const uint8_t CROPPER_JS[] asm("_binary_web_vendor_cropper_min_js_start");
 extern const uint8_t CROPPER_CSS[] asm("_binary_web_vendor_cropper_min_css_start");
@@ -145,6 +146,12 @@ void sendImageTools() {
   server.sendHeader("Cache-Control", "no-store");
   server.send_P(200, "application/javascript; charset=utf-8",
                 reinterpret_cast<const char*>(IMAGE_TOOLS_JS));
+}
+
+void sendImageAlgorithms() {
+  server.sendHeader("Cache-Control", "no-store");
+  server.send_P(200, "application/javascript; charset=utf-8",
+                reinterpret_cast<const char*>(IMAGE_ALGORITHMS_JS));
 }
 
 void sendImageCropper() {
@@ -806,6 +813,7 @@ void registerRoutes() {
   server.on("/", HTTP_GET, sendPage);
   server.on("/", HTTP_HEAD, sendPage);
   server.on("/image-tools.js", HTTP_GET, sendImageTools);
+  server.on("/image-algorithms.js", HTTP_GET, sendImageAlgorithms);
   server.on("/image-cropper.js", HTTP_GET, sendImageCropper);
   server.on("/cropper.min.js", HTTP_GET, sendCropperScript);
   server.on("/cropper.min.css", HTTP_GET, sendCropperStyle);

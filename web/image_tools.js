@@ -20,6 +20,7 @@
   const RED_WEIGHT = 0.299;
   const GREEN_WEIGHT = 0.587;
   const BLUE_WEIGHT = 0.114;
+  const ADVANCED_ALGORITHMS = ['epd-perceptual', 'epd-adaptive', 'epd-blue', 'epd-structure', 'epd-iterative'];
   let sourceFile = null;
   let sourceImage = null;
   let sourcePromise = null;
@@ -223,7 +224,14 @@
     const rotation = Number(options.rotation === undefined ? 0 : options.rotation);
     if (!['contain', 'cover', 'manual'].includes(fit) || ![0, 90, 180, 270].includes(rotation)) throw new Error('image_options');
     const algorithm = options.algorithm === undefined ? 'legacy' : options.algorithm;
-    if (!['epd-photo', 'epd-smooth', 'legacy'].includes(algorithm)) throw new Error('image_options');
+    if (!['epd-photo', 'epd-smooth', 'legacy', ...ADVANCED_ALGORITHMS].includes(algorithm)) throw new Error('image_options');
+    const neutral = options.neutral === undefined ? true : options.neutral;
+    const passes = options.passes === undefined ? 4 : options.passes;
+    const palette = options.palette === undefined ? PALETTE : options.palette;
+    if (typeof neutral !== 'boolean' || !Number.isInteger(passes) || passes < 1 || passes > 12 ||
+      !Array.isArray(palette) || palette.length !== 4 ||
+      palette.some(color => !Array.isArray(color) || color.length !== 3 ||
+        color.some(value => !Number.isInteger(value) || value < 0 || value > 255))) throw new Error('image_options');
     let crop = null;
     if (fit === 'manual') {
       const rect = options.crop;
@@ -234,7 +242,7 @@
       }
       crop = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
     }
-    return { fit, rotation, algorithm, crop };
+    return { fit, rotation, algorithm, crop, neutral, passes, palette: palette.map(color => color.slice()) };
   }
 
   function ensureCurrent(options) {
@@ -285,10 +293,15 @@
         if (!data || data.id !== task.id) return;
         if (Number.isFinite(data.progress)) {
           resetTimeout();
-          if (options.onProgress) options.onProgress(data.progress);
+          if (options.onProgress) options.onProgress(data.progress, data.label);
           return;
         }
-        if (data.error || !(data.frame instanceof Uint8Array) || data.frame.length !== FRAME_BYTES ||
+        if (data.error) {
+          const code = ['image_options', 'image_palette', 'image_algorithm_tools'].includes(data.error) ? data.error : 'image_worker';
+          stopWorker(new Error(code));
+          return;
+        }
+        if (!(data.frame instanceof Uint8Array) || data.frame.length !== FRAME_BYTES ||
           !(data.pixels instanceof Uint8ClampedArray) || data.pixels.length !== WIDTH * HEIGHT * 4) {
           stopWorker(new Error('image_worker'));
           return;
@@ -324,7 +337,7 @@
       (location.protocol === 'http:' || location.protocol === 'https:')) {
       try { return await quantizeInWorker(preview, coverage, config, options); }
       catch (error) {
-        if (error.message === 'image_cancelled') throw error;
+        if (['image_cancelled', 'image_options', 'image_palette'].includes(error.message)) throw error;
         // 热点内置浏览器可能禁用 Worker；回退仍执行同一算法。
         workerDisabled = true;
         ensureCurrent(options);
@@ -420,6 +433,27 @@
     if (config.algorithm === 'legacy') {
       return quantizeLegacy(imageData, options);
     }
+    if (ADVANCED_ALGORITHMS.includes(config.algorithm)) {
+      // Worker 按需加载独立模块；旧的三种算法不依赖新模块成功加载。
+      if (WORKER_CONTEXT && !self.ImageAlgorithms) {
+        try { self.importScripts(new URL('image-algorithms.js', self.location.href).href); }
+        catch (error) { throw new Error('image_algorithm_tools'); }
+      }
+      if (!self.ImageAlgorithms) throw new Error('image_algorithm_tools');
+      const indices = await self.ImageAlgorithms.convert(imageData.data, coverage, config, options);
+      ensureCurrent(options);
+      if (!(indices instanceof Uint8Array) || indices.length !== WIDTH * HEIGHT) throw new Error('image_options');
+      const frame = new Uint8Array(FRAME_BYTES);
+      // 预览与上传都由同一份索引生成，色板只参与计算，不改变驱动的四色定义。
+      for (let p = 0; p < indices.length; p += 1) {
+        const color = indices[p];
+        if (color > 3) throw new Error('image_options');
+        frame[p >> 2] |= color << ((3 - (p & 3)) * 2);
+        imageData.data.set(PALETTE[color], p * 4);
+        imageData.data[p * 4 + 3] = 255;
+      }
+      return frame;
+    }
     const pixels = imageData.data;
     const frame = new Uint8Array(FRAME_BYTES);
     const kernel = config.algorithm === 'epd-smooth' ? JJN : FLOYD;
@@ -476,8 +510,8 @@
       (typeof originalOptions.isCurrent !== 'function' || originalOptions.isCurrent());
     options = {
       isCurrent,
-      onProgress: value => {
-        if (isCurrent() && typeof originalOptions.onProgress === 'function') originalOptions.onProgress(value);
+      onProgress: (value, label) => {
+        if (isCurrent() && typeof originalOptions.onProgress === 'function') originalOptions.onProgress(value, label);
       }
     };
     const image = await imagePromise;
@@ -604,11 +638,12 @@
         }
         const preview = { data: data.pixels };
         const frame = await quantize(preview, data.coverage, config, {
-          onProgress: progress => self.postMessage({ id: data.id, progress })
+          onProgress: (progress, label) => self.postMessage({ id: data.id, progress, label })
         });
         self.postMessage({ id: data.id, frame, pixels: preview.data }, [frame.buffer, preview.data.buffer]);
       } catch (error) {
-        self.postMessage({ id: data ? data.id : null, error: 'image_worker' });
+        const code = ['image_options', 'image_palette', 'image_algorithm_tools'].includes(error.message) ? error.message : 'image_worker';
+        self.postMessage({ id: data ? data.id : null, error: code });
       }
     };
     return;
