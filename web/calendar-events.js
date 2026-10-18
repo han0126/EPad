@@ -186,13 +186,21 @@
       this.nodes.empty.hidden = entries.length !== 0;
       for (const item of entries) {
         const row = document.createElement('tr');
-        for (const value of [item.kind === 'important' ? `每年 ${item.date.slice(5)}` : item.date,
-          item.kind === 'important' ? '重要日' : '备忘', item.text]) {
+        row.setAttribute('role', 'row');
+        row.dataset.kind = item.kind;
+        // 窄屏按记录展示时保留每一项的名称与原表格语义。
+        for (const [label, value] of [
+          ['日期', item.kind === 'important' ? `每年 ${item.date.slice(5)}` : item.date],
+          ['类型', item.kind === 'important' ? '重要日' : '备忘'], ['正文', item.text]]) {
           const cell = document.createElement('td');
+          cell.setAttribute('role', 'cell');
+          cell.dataset.label = label;
           cell.textContent = value;
           row.append(cell);
         }
         const actions = document.createElement('td');
+        actions.setAttribute('role', 'cell');
+        actions.dataset.label = '操作';
         const edit = document.createElement('button');
         edit.type = 'button';
         edit.textContent = '编辑';

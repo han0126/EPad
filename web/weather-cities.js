@@ -178,6 +178,7 @@
         while (current() && data.state === 'searching' && Date.now() < deadline) {
           await new Promise(resolve => setTimeout(resolve, 600));
           if (!current()) return;
+          if (document.hidden) continue;
           data = await this.request('/api/weather/cities/status', { headers: { 'X-Portal-Token': token } });
           if (data.id !== id) throw new Error('城市查询已被更新，请重新搜索。');
         }

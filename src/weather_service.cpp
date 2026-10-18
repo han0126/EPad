@@ -61,7 +61,7 @@ bool forecastMatches(const calendar::Date& date) {
 
 void fetchTask(void*) {
   completed = weather_client::fetch(job.settings, job.day);
-  job.settings.apiKey = "";
+  secure_memory::clear(job.settings.apiKey);
   // 结果写完后再通知主任务，缓存和显示状态只由主任务修改。
   resultReady.store(true, std::memory_order_release);
   vTaskDelete(nullptr);
@@ -100,7 +100,7 @@ void tryStart() {
   if (xTaskCreatePinnedToCore(fetchTask, "weather-fetch", WeatherConfig::TASK_STACK_BYTES,
                               nullptr, 1, nullptr, 0) != pdPASS) {
     active = false;
-    job.settings.apiKey = "";
+    secure_memory::clear(job.settings.apiKey);
     cache.lastError = weather_data::Error::TaskStart;
     storageFailed = !weather_cache::save(cache);
     Serial.println("[weather] Task start failed; this attempt will not be repeated automatically.");
@@ -136,6 +136,7 @@ void settingsChanged() {
   }
   const bool locationChanged = updated.latitude100 != settings.latitude100 ||
       updated.longitude100 != settings.longitude100;
+  secure_memory::clear(settings.apiKey);
   settings = updated;
   locationRefreshPending = settings.enabled && (locationRefreshPending || locationChanged);
   // 已联网校时则立即请求；否则仅在本次开机中等待条件就绪，换日和重启不额外放行。

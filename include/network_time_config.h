@@ -2,7 +2,12 @@
 
 #include <stdint.h>
 
-#if __has_include("wifi_credentials.h")
+// 默认只使用网页配置；显式启用兼容选项才将本地凭据编入固件。
+#ifndef CALENDAR_ENABLE_LEGACY_WIFI_CREDENTIALS
+#define CALENDAR_ENABLE_LEGACY_WIFI_CREDENTIALS 0
+#endif
+
+#if CALENDAR_ENABLE_LEGACY_WIFI_CREDENTIALS && __has_include("wifi_credentials.h")
 #include "wifi_credentials.h"
 #endif
 
@@ -16,8 +21,10 @@
 
 namespace NetworkTimeConfig {
 
+#if CALENDAR_ENABLE_LEGACY_WIFI_CREDENTIALS
 constexpr char SSID[] = CALENDAR_WIFI_SSID;
 constexpr char PASSWORD[] = CALENDAR_WIFI_PASSWORD;
+#endif
 
 // POSIX 时区符号与 UTC 偏移相反：CST-8 表示北京时间 UTC+8。
 constexpr char TIMEZONE[] = "CST-8";
@@ -32,8 +39,6 @@ constexpr uint32_t WIFI_TIMEOUT_MS = 8000;
 constexpr uint32_t NTP_TIMEOUT_MS = 7000;
 
 // 复位时提供限时配网页面，每日定时唤醒不开启热点。
-constexpr char PORTAL_SSID[] = "EPD-Calendar";
-constexpr char PORTAL_PASSWORD[] = "calendar1234";
 constexpr uint32_t PORTAL_TIMEOUT_MS = 5UL * 60 * 1000;
 constexpr uint32_t PORTAL_SUCCESS_VIEW_MS = 2UL * 60 * 1000;
 // 图片待上传和失败重试使用此窗口；成功刷屏后会提前关闭。

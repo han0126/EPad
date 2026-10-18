@@ -158,10 +158,12 @@ const char* regionName(const Settings& settings) {
 }
 
 bool load(Settings& settings) {
+  secure_memory::clear(settings.apiKey);
   settings = Settings{};
   Preferences preferences;
   if (!preferences.begin(STORAGE_NAMESPACE, true)) return false;
   StoredSettings record = {};
+  secure_memory::ScopedWipe wipeRecord(&record, sizeof(record));
   const size_t length = preferences.getBytesLength(SETTINGS_KEY);
   // 保持旧结构原样读取，不在启动时重写，原 Host、KEY、开关和坐标均保留。
   const bool legacy = length == sizeof(StoredSettingsV1);
@@ -195,6 +197,7 @@ bool save(const Settings& settings) {
   if (load(previous) && sameSettings(previous, settings)) return true;
 
   StoredSettings record = {};
+  secure_memory::ScopedWipe wipeRecord(&record, sizeof(record));
   record.base.version = RECORD_VERSION;
   record.base.enabled = settings.enabled ? 1 : 0;
   record.base.latitude100 = settings.latitude100;

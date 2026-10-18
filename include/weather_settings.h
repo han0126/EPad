@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "secure_memory.h"
 
 namespace weather_settings {
 
@@ -17,6 +18,7 @@ struct Settings {
   String cityId;
   String cityName;
   String cityProvince;
+  ~Settings() { secure_memory::clear(apiKey); }
 };
 
 bool isValidHost(const String& host);

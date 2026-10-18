@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "network_time_config.h"
+#include "secure_memory.h"
 
 namespace {
 
@@ -14,23 +15,25 @@ struct StoredNetwork {
   char password[65];
 };
 
-bool loadStored(network_settings::Credentials& credentials) {
+bool loadStored(network_settings::Credentials& credentials, bool& exists) {
   Preferences preferences;
   if (!preferences.begin("calendar-net", true)) return false;
 
   StoredNetwork record = {};
-  const bool exists = preferences.isKey("wifi");
+  exists = preferences.isKey("wifi");
   const bool loaded = exists &&
       preferences.getBytesLength("wifi") == sizeof(record) &&
       preferences.getBytes("wifi", &record, sizeof(record)) == sizeof(record);
   preferences.end();
   if (!loaded || record.version != 1 || record.ssid[32] != '\0' ||
       record.password[64] != '\0') {
+    secure_memory::wipe(&record, sizeof(record));
     return false;
   }
 
   credentials.ssid = record.ssid;
   credentials.password = record.password;
+  secure_memory::wipe(&record, sizeof(record));
   return network_settings::isValid(credentials);
 }
 
@@ -39,6 +42,8 @@ bool loadStored(network_settings::Credentials& credentials) {
 namespace network_settings {
 
 bool isValid(const Credentials& credentials) {
+  if (std::strlen(credentials.ssid.c_str()) != credentials.ssid.length() ||
+      std::strlen(credentials.password.c_str()) != credentials.password.length()) return false;
   if (credentials.ssid.length() == 0 || credentials.ssid.length() > 32) {
     return false;
   }
@@ -55,14 +60,26 @@ bool isValid(const Credentials& credentials) {
 }
 
 bool load(Credentials& credentials) {
-  if (loadStored(credentials)) return true;
+  secure_memory::clear(credentials.password);
+  credentials.ssid = "";
+  bool exists = false;
+  if (loadStored(credentials, exists)) return true;
+  if (exists) return false;
+#if CALENDAR_ENABLE_LEGACY_WIFI_CREDENTIALS
   credentials.ssid = NetworkTimeConfig::SSID;
   credentials.password = NetworkTimeConfig::PASSWORD;
   return isValid(credentials);
+#else
+  return false;
+#endif
 }
 
 bool save(const Credentials& credentials) {
   if (!isValid(credentials)) return false;
+  Credentials previous;
+  bool exists = false;
+  if (loadStored(previous, exists) && previous.ssid == credentials.ssid &&
+      previous.password == credentials.password) return true;
   StoredNetwork record = {};
   record.version = 1;
   std::memcpy(record.ssid, credentials.ssid.c_str(), credentials.ssid.length());
@@ -70,9 +87,24 @@ bool save(const Credentials& credentials) {
               credentials.password.length());
 
   Preferences preferences;
-  if (!preferences.begin("calendar-net", false)) return false;
+  if (!preferences.begin("calendar-net", false)) {
+    secure_memory::wipe(&record, sizeof(record));
+    return false;
+  }
   const bool saved =
       preferences.putBytes("wifi", &record, sizeof(record)) == sizeof(record);
+  preferences.end();
+  secure_memory::wipe(&record, sizeof(record));
+  return saved;
+}
+
+bool clear() {
+  // 单条原子写入空记录，阻止删除后再次启用旧配置文件中的网络。
+  StoredNetwork record = {};
+  record.version = 2;
+  Preferences preferences;
+  if (!preferences.begin("calendar-net", false)) return false;
+  const bool saved = preferences.putBytes("wifi", &record, sizeof(record)) == sizeof(record);
   preferences.end();
   return saved;
 }

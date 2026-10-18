@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "network_time_config.h"
+#include "secure_memory.h"
 
 namespace {
 
@@ -125,6 +126,11 @@ void end() {
   std::memset(requestedSsid, 0, sizeof(requestedSsid));
   active = false;
   fastAttempt = false;
+}
+
+void forgetHint() {
+  end();
+  secure_memory::wipe(&hint, sizeof(hint));
 }
 
 }  // namespace wifi_connection

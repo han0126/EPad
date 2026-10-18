@@ -44,10 +44,6 @@ weather_display::Data weatherFor(const calendar::Date& date) {
   return weatherPreviewMode ? selectedWeather : weather_service::dataForDate(date);
 }
 
-Color4 readPixel(uint16_t x, uint16_t y) {
-  return canvas.pixel(x, y);
-}
-
 void yieldCalendar() {
   vTaskDelay(1);
 }
@@ -87,8 +83,11 @@ void displayWorker(void*) {
       if (!jd79668::initialize()) {
         error = display_service::Error::PanelFailed;
       } else {
-        jd79668::sendFrame(readPixel);
-        if (!jd79668::refresh()) error = display_service::Error::PanelFailed;
+        if (!jd79668::sendFrame(canvas.packedData(), EPD_FRAME_BYTES)) {
+          error = display_service::Error::PanelFailed;
+        } else if (!jd79668::refresh()) {
+          error = display_service::Error::PanelFailed;
+        }
         if (!jd79668::sleep()) error = display_service::Error::PanelFailed;
       }
     }

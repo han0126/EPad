@@ -4,10 +4,13 @@
   const ALGORITHMS = Object.freeze(['epd-perceptual', 'epd-adaptive', 'epd-blue', 'epd-structure', 'epd-iterative']);
   const WIDTH = 400, HEIGHT = 300;
   const DEFAULT_PALETTE = [[0, 0, 0], [255, 255, 255], [255, 255, 0], [255, 0, 0]];
+  // 单份色板缓存限制内存占用；只发布完整结果，不缓存原图或未完成任务。
+  let mappingCache = null;
+  let noiseCache = null;
 
   // 与独立测试页使用相同的五种实验算法；浏览器和 Worker 共用，不改变屏幕编码。
   async function engine(job, emit, cancelled) {
-    const width = 400, height = 300, count = width * height;
+    const width = WIDTH, height = HEIGHT, count = width * height;
     const fs = [[1, 0, 7 / 16], [-1, 1, 3 / 16], [0, 1, 5 / 16], [1, 1, 1 / 16]];
     let lastProgress = 0;
     async function tick(fraction, label) {
@@ -46,14 +49,19 @@
     }
   
     let lut = null, targets = null, weights = null, neutrals = null, edges = null;
-    async function prepareMapping() {
-      if (targets) return;
+    async function prepareLut() {
+      const key = JSON.stringify(job.palette);
+      if (mappingCache && mappingCache.key === key) {
+        lut = mappingCache.lut;
+        await tick(.15, '复用感知色域映射');
+        return;
+      }
       const mixtures = [];
       // 在固定四色的面积比例单纯形中搜索，禁止自定义出屏幕不存在的第五种墨色。
       for (let a = 0; a <= 12; a += 1) for (let b = 0; b <= 12 - a; b += 1) for (let c = 0; c <= 12 - a - b; c += 1) {
         const w = [a / 12, b / 12, c / 12, (12 - a - b - c) / 12];
         const color = mix(w);
-        mixtures.push({ w, rgb: color, lab: lab(...color) });
+        mixtures.push({ w, lab: lab(...color) });
       }
       lut = new Float32Array(17 * 17 * 17 * 4);
       for (let r = 0; r < 17; r += 1) {
@@ -79,17 +87,32 @@
         }
         await tick(r / 17 * .15, '建立感知色域映射');
       }
-      weights = new Float32Array(count * 4);
-      targets = new Float32Array(count * 3);
-      neutrals = new Uint8Array(count);
+      mappingCache = { key, lut };
+    }
+
+    async function prepareMapping() {
+      await prepareLut();
+      const blue = job.algorithm === 'blue';
+      weights = blue ? new Float32Array(count * 4) : null;
+      targets = blue ? null : new Float32Array(count * 3);
+      neutrals = blue ? null : new Uint8Array(count);
+      // 保留 Float32 中间舍入，与原整幅权重数组的计算结果一致。
+      const pixelWeights = new Float32Array(4);
       for (let y = 0; y < height; y += 1) {
         for (let x = 0; x < width; x += 1) {
           const p = y * width + x, i = p * 4;
-          if (!job.mask[p]) { weights[i + 1] = 1; targets.set(inks[1], p * 3); neutrals[p] = 1; continue; }
+          const w = weights || pixelWeights, offset = weights ? i : 0;
+          if (!weights) pixelWeights.fill(0);
+          if (!job.mask[p]) {
+            w[offset + 1] = 1;
+            if (targets) targets.set(inks[1], p * 3);
+            if (neutrals) neutrals[p] = 1;
+            continue;
+          }
           const rgb = [job.pixels[i], job.pixels[i + 1], job.pixels[i + 2]];
           const targetLab = lab(table[rgb[0]], table[rgb[1]], table[rgb[2]]);
           const neutral = job.neutral && Math.hypot(targetLab[1], targetLab[2]) < 10;
-          neutrals[p] = neutral ? 1 : 0;
+          if (neutrals) neutrals[p] = neutral ? 1 : 0;
           if (neutral) {
             let low = 0, high = 1;
             // 黑白线上的一维最小化也使用实际色板，不假定纸白是纯白。
@@ -102,20 +125,21 @@
             const error = evaluate(t);
             if (evaluate(0) <= error) t = 0;
             if (evaluate(1) <= evaluate(t)) t = 1;
-            weights[i] = 1 - t; weights[i + 1] = t;
+            w[offset] = 1 - t; w[offset + 1] = t;
           } else {
             const pos = rgb.map(v => v * 16 / 255), base = pos.map(v => Math.min(15, Math.floor(v)));
             const frac = pos.map((v, c) => v - base[c]);
             for (let dr = 0; dr < 2; dr += 1) for (let dg = 0; dg < 2; dg += 1) for (let db = 0; db < 2; db += 1) {
               const factor = (dr ? frac[0] : 1 - frac[0]) * (dg ? frac[1] : 1 - frac[1]) * (db ? frac[2] : 1 - frac[2]);
-              const offset = (((base[0] + dr) * 17 + base[1] + dg) * 17 + base[2] + db) * 4;
-              for (let c = 0; c < 4; c += 1) weights[i + c] += lut[offset + c] * factor;
+              const lutOffset = (((base[0] + dr) * 17 + base[1] + dg) * 17 + base[2] + db) * 4;
+              for (let c = 0; c < 4; c += 1) w[offset + c] += lut[lutOffset + c] * factor;
             }
           }
-          for (let color = 0; color < 4; color += 1) for (let c = 0; c < 3; c += 1) targets[p * 3 + c] += weights[i + color] * inks[color][c];
+          if (targets) for (let color = 0; color < 4; color += 1) for (let c = 0; c < 3; c += 1) targets[p * 3 + c] += w[offset + color] * inks[color][c];
         }
         if ((y & 15) === 15) await tick(.15 + y / height * .1, '映射原图颜色');
       }
+      if (job.algorithm !== 'structure' && job.algorithm !== 'iterative') return;
       edges = new Float32Array(count * 3);
       for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
         const p = y * width + x;
@@ -176,8 +200,14 @@
       return out;
     }
   
-    async function blueNoise() {
-      const size = 64, n = size * size, pattern = new Uint8Array(n), density = new Float64Array(n), rank = new Uint16Array(n);
+    async function blueNoiseRank() {
+      if (noiseCache) {
+        await tick(.8, '复用蓝噪声阈值');
+        return noiseCache;
+      }
+      const size = 64, n = size * size;
+      const pattern = new Uint8Array(n), density = new Float64Array(n);
+      const rank = new Uint16Array(n);
       let random = 0x796684;
       const rng = () => { random ^= random << 13; random ^= random >>> 17; random ^= random << 5; return (random >>> 0) / 4294967296; };
       const order = Array.from({ length: n }, (_, i) => i);
@@ -213,6 +243,13 @@
         const p = pick(false); rank[p] = value; change(p, true);
         if ((value & 127) === 0) await tick(.6 + (value - n / 2) / n * .4, '生成蓝噪声阈值');
       }
+      await tick(.8, '蓝噪声阈值已生成');
+      noiseCache = rank;
+      return rank;
+    }
+
+    async function blueNoise() {
+      const size = 64, n = size * size, rank = await blueNoiseRank();
       const out = new Uint8Array(count);
       for (let y = 0; y < height; y += 1) {
         for (let x = 0; x < width; x += 1) {
@@ -231,11 +268,11 @@
     async function optimize(out) {
       // 两个空间尺度的视觉误差 + 较弱的边缘点误差；不宣称复现原版 Color DBS。
       const opponent = rgb => { const y = luminance(rgb); return [2 * y, .6 * (rgb[0] - y), .6 * (rgb[2] - y)]; };
-      const colors = inks.map(opponent), target = new Float64Array(count * 3), residual = new Float64Array(count * 3);
+      const colors = inks.map(opponent), residual = new Float64Array(count * 3);
       const pointWeight = new Float64Array(count);
       for (let p = 0; p < count; p += 1) {
-        target.set(opponent([targets[p * 3], targets[p * 3 + 1], targets[p * 3 + 2]]), p * 3);
-        for (let c = 0; c < 3; c += 1) residual[p * 3 + c] = colors[out[p]][c] - target[p * 3 + c];
+        const target = opponent([targets[p * 3], targets[p * 3 + 1], targets[p * 3 + 2]]);
+        for (let c = 0; c < 3; c += 1) residual[p * 3 + c] = colors[out[p]][c] - target[c];
         pointWeight[p] = .02 + .10 * edges[p * 3 + 2];
       }
       const models = [];

@@ -5,7 +5,6 @@
 #include <DNSServer.h>
 #include <WebServer.h>
 #include <WiFi.h>
-#include <esp_system.h>
 
 #include <cstdio>
 #include <cstring>
@@ -19,31 +18,23 @@
 #include "display_mode.h"
 #include "image_transfer.h"
 #include "network_settings.h"
+#include "wifi_connection.h"
 #include "network_time_config.h"
 #include "power_service.h"
 #include "weather_settings.h"
 #include "weather_icons.h"
 #include "weather_service.h"
 #include "weather_cities.h"
-
-// PlatformIO 将独立 HTML 文件直接嵌入固件，无需上传文件系统。
-extern const uint8_t WIFI_SETUP_HTML[] asm("_binary_web_wifi_setup_html_start");
-extern const uint8_t IMAGE_TOOLS_JS[] asm("_binary_web_image_tools_js_start");
-extern const uint8_t IMAGE_ALGORITHMS_JS[] asm("_binary_web_image_algorithms_js_start");
-extern const uint8_t IMAGE_CROPPER_JS[] asm("_binary_web_image_cropper_js_start");
-extern const uint8_t CROPPER_JS[] asm("_binary_web_vendor_cropper_min_js_start");
-extern const uint8_t CROPPER_CSS[] asm("_binary_web_vendor_cropper_min_css_start");
-extern const uint8_t CROPPER_LICENSE[] asm("_binary_web_vendor_cropper_LICENSE_txt_start");
-extern const uint8_t WEATHER_ICONS_JSON[] asm("_binary_web_weather_icons_json_start");
-extern const uint8_t WEATHER_PREVIEW_JS[] asm("_binary_web_weather_preview_js_start");
-extern const uint8_t WEATHER_CITIES_JS[] asm("_binary_web_weather_cities_js_start");
-extern const uint8_t CALENDAR_EVENTS_JS[] asm("_binary_web_calendar_events_js_start");
+#include "portal_http_server.h"
+#include "portal_security.h"
+#include "secure_memory.h"
+#include "portal_assets.h"
 
 namespace {
 
 constexpr char PORTAL_URL[] = "http://192.168.4.1/";
 
-WebServer server(IPAddress(192, 168, 4, 1), 80);
+PortalHttpServer server(IPAddress(192, 168, 4, 1));
 DNSServer dns;
 bool active = false;
 bool routesReady = false;
@@ -57,7 +48,8 @@ uint32_t openedAt = 0;
 uint32_t synchronizedAt = 0;
 clock_service::SyncStatus previousStatus = clock_service::SyncStatus::Idle;
 network_settings::Credentials pendingCredentials;
-char sessionToken[17] = {};
+uint32_t writeWindowAt = 0;
+uint8_t writeCount = 0;
 char lastSync[24] = {};
 uint32_t imageOpenedAt = 0;
 bool imageWorkPending = false;
@@ -108,9 +100,60 @@ void sendJson(int code, const char* body) {
 }
 
 bool authorized() {
-  if (server.header("X-Portal-Token") == sessionToken) return true;
-  sendJson(403, "{\"error\":\"session_expired\"}");
+  if (portal_security::authenticated(server.header("X-Portal-Token"), server.client().remoteIP())) return true;
+  sendJson(401, "{\"error\":\"session_expired\"}");
   return false;
+}
+
+bool requestGate(WebServer& request) {
+  if (!request.uri().startsWith("/api/")) {
+    if (request.method() != HTTP_POST) return true;
+    sendJson(405, "{\"error\":\"request_method\"}");
+    return false;
+  }
+  const String host = request.hostHeader();
+  const String origin = request.header("Origin");
+  if ((host != "192.168.4.1" && host != "192.168.4.1:80") ||
+      (origin.length() != 0 && origin != "http://192.168.4.1" && origin != "http://192.168.4.1:80") ||
+      request.header("Sec-Fetch-Site") == "cross-site") {
+    sendJson(403, "{\"error\":\"request_origin\"}");
+    return false;
+  }
+  if (request.uri() == "/api/login" && request.method() == HTTP_POST) {
+    if (closeRequested || remainingMs() == 0 || power_service::imageSleepPending()) {
+      sendJson(409, "{\"error\":\"portal_closing\"}");
+      return false;
+    }
+    if (portal_security::loginAllowed()) return true;
+    sendJson(429, "{\"error\":\"login_locked\"}");
+    return false;
+  }
+  if (!authorized()) return false;
+  if (closeRequested || remainingMs() == 0) {
+    sendJson(409, "{\"error\":\"portal_closing\"}");
+    return false;
+  }
+  if (request.method() == HTTP_POST) {
+    if (millis() - writeWindowAt >= 10000) { writeWindowAt = millis(); writeCount = 0; }
+    if (writeCount >= 20) { sendJson(429, "{\"error\":\"request_rate\"}"); return false; }
+    ++writeCount;
+  }
+  return true;
+}
+
+void login() {
+  String password = server.arg("password");
+  const bool accepted = portal_security::login(password, server.client().remoteIP());
+  secure_memory::clear(password);
+  if (!accepted) {
+    sendJson(portal_security::loginAllowed() ? 401 : 429,
+        portal_security::loginAllowed() ? "{\"error\":\"login_invalid\"}" : "{\"error\":\"login_locked\"}");
+    return;
+  }
+  char json[64];
+  std::snprintf(json, sizeof(json), "{\"token\":\"%s\"}", portal_security::token());
+  sendJson(200, json);
+  secure_memory::wipe(json, sizeof(json));
 }
 
 bool calendarSelected() {
@@ -132,74 +175,7 @@ void sendPage() {
     redirectToPortal();
     return;
   }
-  server.sendHeader("Cache-Control", "no-store");
-  if (server.method() == HTTP_HEAD) {
-    // HEAD 只返回响应头，避免根路径上的探测反复跳转到自身。
-    server.send(200, "text/html; charset=utf-8", "");
-    return;
-  }
-  server.send_P(200, "text/html; charset=utf-8",
-                reinterpret_cast<const char*>(WIFI_SETUP_HTML));
-}
-
-void sendImageTools() {
-  server.sendHeader("Cache-Control", "no-store");
-  server.send_P(200, "application/javascript; charset=utf-8",
-                reinterpret_cast<const char*>(IMAGE_TOOLS_JS));
-}
-
-void sendImageAlgorithms() {
-  server.sendHeader("Cache-Control", "no-store");
-  server.send_P(200, "application/javascript; charset=utf-8",
-                reinterpret_cast<const char*>(IMAGE_ALGORITHMS_JS));
-}
-
-void sendImageCropper() {
-  server.sendHeader("Cache-Control", "no-store");
-  server.send_P(200, "application/javascript; charset=utf-8",
-                reinterpret_cast<const char*>(IMAGE_CROPPER_JS));
-}
-
-void sendCropperScript() {
-  server.sendHeader("Cache-Control", "no-store");
-  server.send_P(200, "application/javascript; charset=utf-8",
-                reinterpret_cast<const char*>(CROPPER_JS));
-}
-
-void sendCropperStyle() {
-  server.sendHeader("Cache-Control", "no-store");
-  server.send_P(200, "text/css; charset=utf-8",
-                reinterpret_cast<const char*>(CROPPER_CSS));
-}
-
-void sendCropperLicense() {
-  server.sendHeader("Cache-Control", "no-store");
-  server.send_P(200, "text/plain; charset=utf-8",
-                reinterpret_cast<const char*>(CROPPER_LICENSE));
-}
-
-void sendWeatherIcons() {
-  server.sendHeader("Cache-Control", "no-store");
-  server.send_P(200, "application/json; charset=utf-8",
-                reinterpret_cast<const char*>(WEATHER_ICONS_JSON));
-}
-
-void sendWeatherPreviewScript() {
-  server.sendHeader("Cache-Control", "no-store");
-  server.send_P(200, "application/javascript; charset=utf-8",
-                reinterpret_cast<const char*>(WEATHER_PREVIEW_JS));
-}
-
-void sendWeatherCitiesScript() {
-  server.sendHeader("Cache-Control", "no-store");
-  server.send_P(200, "application/javascript; charset=utf-8",
-                reinterpret_cast<const char*>(WEATHER_CITIES_JS));
-}
-
-void sendCalendarEventsScript() {
-  server.sendHeader("Cache-Control", "no-store");
-  server.send_P(200, "application/javascript; charset=utf-8",
-                reinterpret_cast<const char*>(CALENDAR_EVENTS_JS));
+  portal_assets::send(server, portal_assets::Asset::Page, false);
 }
 
 bool readEventsAllowed() {
@@ -266,6 +242,7 @@ void formatDate(const calendar::Date& date, char* output, size_t size) {
 }
 
 void sendStatus() {
+  if (!authorized()) return;
   power_service::requestImageSleep();
   struct tm current = {};
   const bool valid = clock_service::readLocalTime(current);
@@ -276,7 +253,7 @@ void sendStatus() {
     strftime(dateText, sizeof(dateText), "%Y-%m-%d", &current);
   }
 
-  // JSON 仅包含固定状态和设备生成的时间，不回传 Wi-Fi 名称或密码。
+  // 状态含当天备忘，仅登录后返回；不回传 Wi-Fi 密码或 API KEY。
   const display_service::Status display = display_service::status();
   char displayedDate[16];
   char requestedDate[16];
@@ -302,7 +279,6 @@ void sendStatus() {
   json["saved"] = hasSavedNetwork;
   json["connected"] = WiFi.status() == WL_CONNECTED;
   json["remaining"] = (remainingMs() + 999) / 1000;
-  json["token"] = sessionToken;
   JsonObject eventsJson = json.createNestedObject("events");
   eventsJson["ready"] = calendar_events::isReady();
   eventsJson["revision"] = calendar_events::revision();
@@ -395,6 +371,26 @@ void resyncNetwork() {
   startRequest(credentials, false);
 }
 
+void clearNetwork() {
+  if (!writeEventsAllowed()) return;
+  if (!network_settings::clear()) {
+    sendJson(503, "{\"error\":\"network_clear_failed\"}");
+    return;
+  }
+  savePending = false;
+  hasSavedNetwork = false;
+  storageFailed = false;
+  secure_memory::clear(pendingCredentials.password);
+  pendingCredentials.ssid = "";
+  // 保留热点和已校准的系统时间，只清除 STA 当前连接配置。
+  WiFi.setAutoReconnect(false);
+  WiFi.disconnect(false, true);
+  wifi_connection::forgetHint();
+  clock_service::beginNetworkTime(nullptr, nullptr, true);
+  previousStatus = clock_service::syncStatus();
+  sendJson(200, "{\"cleared\":true}");
+}
+
 void sendWeatherSettings(const weather_settings::Settings& settings, bool saved) {
   // 城市名称通过 JSON 库转义；绝不回传密钥。
   DynamicJsonDocument json(1024);
@@ -419,6 +415,24 @@ void readWeatherSettings() {
   weather_settings::Settings settings;
   const bool saved = weather_settings::load(settings);
   sendWeatherSettings(settings, saved);
+}
+
+void clearWeatherKey() {
+  if (!writeEventsAllowed()) return;
+  weather_settings::Settings settings;
+  if (!weather_settings::load(settings)) {
+    sendJson(503, "{\"error\":\"weather_save_failed\"}");
+    return;
+  }
+  secure_memory::clear(settings.apiKey);
+  settings.enabled = false;
+  if (!weather_settings::save(settings)) {
+    sendJson(503, "{\"error\":\"weather_save_failed\"}");
+    return;
+  }
+  weather_service::settingsChanged();
+  display_service::requestWeatherRedraw();
+  sendWeatherSettings(settings, true);
 }
 
 void saveWeatherSettings() {
@@ -447,8 +461,9 @@ void saveWeatherSettings() {
   settings.apiHost.trim();
   settings.apiHost.toLowerCase();
   // 留空保留原密钥，不向页面回填密钥，也不在编译时写入源码。
-  const String key = server.arg("apiKey");
+  String key = server.arg("apiKey");
   if (key.length() != 0) settings.apiKey = key;
+  secure_memory::clear(key);
   if ((settings.enabled || settings.apiHost.length() != 0) &&
       !weather_settings::isValidHost(settings.apiHost)) {
     sendJson(400, "{\"error\":\"weather_host_invalid\"}");
@@ -559,8 +574,9 @@ void searchWeatherCities() {
   credentials.apiHost = server.arg("apiHost");
   credentials.apiHost.trim();
   credentials.apiHost.toLowerCase();
-  const String key = server.arg("apiKey");
+  String key = server.arg("apiKey");
   if (key.length() != 0) credentials.apiKey = key;
+  secure_memory::clear(key);
   if (!weather_settings::isValidHost(credentials.apiHost)) { sendJson(400, "{\"error\":\"weather_host_invalid\"}"); return; }
   if (!weather_settings::isValidKey(credentials.apiKey)) { sendJson(400, "{\"error\":\"weather_key_invalid\"}"); return; }
   struct tm now = {};
@@ -742,7 +758,7 @@ void receiveImage() {
       server.client().stop();
       return;
     }
-    if (server.header("X-Portal-Token") != sessionToken) {
+    if (!portal_security::authenticated(server.header("X-Portal-Token"), server.client().remoteIP())) {
       uploadHttpStatus = 403;
       uploadError = "session_expired";
     } else if (display_mode::isCalendar()) {
@@ -808,25 +824,25 @@ void displayUploadedImage() {
 
 void registerRoutes() {
   if (routesReady) return;
-  const char* headers[] = {"X-Portal-Token", "Content-Type"};
-  server.collectHeaders(headers, 2);
+  const char* headers[] = {"X-Portal-Token", "Content-Type", "Origin", "Sec-Fetch-Site", "Accept-Encoding", "If-None-Match"};
+  server.collectHeaders(headers, sizeof(headers) / sizeof(headers[0]));
+  server.setRequestGate(requestGate);
   server.on("/", HTTP_GET, sendPage);
   server.on("/", HTTP_HEAD, sendPage);
-  server.on("/image-tools.js", HTTP_GET, sendImageTools);
-  server.on("/image-algorithms.js", HTTP_GET, sendImageAlgorithms);
-  server.on("/image-cropper.js", HTTP_GET, sendImageCropper);
-  server.on("/cropper.min.js", HTTP_GET, sendCropperScript);
-  server.on("/cropper.min.css", HTTP_GET, sendCropperStyle);
-  server.on("/cropper-license.txt", HTTP_GET, sendCropperLicense);
-  server.on("/weather-icons.json", HTTP_GET, sendWeatherIcons);
-  server.on("/weather-preview.js", HTTP_GET, sendWeatherPreviewScript);
-  server.on("/weather-cities.js", HTTP_GET, sendWeatherCitiesScript);
-  server.on("/calendar-events.js", HTTP_GET, sendCalendarEventsScript);
+  portal_assets::registerRoutes(server);
   server.on("/api/status", HTTP_GET, sendStatus);
+  server.on("/api/login", HTTP_POST, login);
+  server.on("/api/logout", HTTP_POST, []() {
+    if (!authorized()) return;
+    sendJson(200, "{\"closed\":true}");
+    portal_security::endSession();
+  });
   server.on("/api/wifi", HTTP_POST, connectNetwork);
+  server.on("/api/wifi/clear", HTTP_POST, clearNetwork);
   server.on("/api/resync", HTTP_POST, resyncNetwork);
   server.on("/api/weather/settings", HTTP_GET, readWeatherSettings);
   server.on("/api/weather/settings", HTTP_POST, saveWeatherSettings);
+  server.on("/api/weather/key/clear", HTTP_POST, clearWeatherKey);
   server.on("/api/weather/cities/search", HTTP_POST, searchWeatherCities);
   server.on("/api/weather/cities/status", HTTP_GET, sendCitySearchStatus);
   server.on("/api/weather/preview", HTTP_POST, previewWeather);
@@ -885,6 +901,7 @@ void processResult() {
     Serial.printf("[portal] Beijing time: %s\n", lastSync);
   }
   savePending = false;
+  secure_memory::clear(pendingCredentials.password);
   pendingCredentials = {};
 }
 
@@ -895,6 +912,8 @@ void closePortal() {
   rawAccepted = false;
   rawComplete = false;
   imageWorkPending = false;
+  portal_security::endSession();
+  secure_memory::clear(pendingCredentials.password);
   pendingCredentials = {};
   clock_service::stopNetwork();
   image_transfer::reset();
@@ -924,18 +943,17 @@ bool begin() {
   WiFi.persistent(false);
   WiFi.setAutoReconnect(false);
   if (!WiFi.mode(display_mode::isCalendar() ? WIFI_AP_STA : WIFI_AP) ||
+      !portal_security::begin() ||
       !WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1),
                           IPAddress(255, 255, 255, 0)) ||
-      !WiFi.softAP(NetworkTimeConfig::PORTAL_SSID,
-                    NetworkTimeConfig::PORTAL_PASSWORD)) {
+      !WiFi.softAP(portal_security::ssid(), portal_security::hotspotPassword(), 1, false, 1)) {
     clock_service::stopNetwork();
     Serial.println("[portal] ERROR: failed to start configuration hotspot.");
     return false;
   }
 
-  std::snprintf(sessionToken, sizeof(sessionToken), "%08lx%08lx",
-                static_cast<unsigned long>(esp_random()),
-                static_cast<unsigned long>(esp_random()));
+  writeWindowAt = millis();
+  writeCount = 0;
   registerRoutes();
   server.begin();
   dns.start(53, "*", WiFi.softAPIP());
@@ -947,7 +965,7 @@ bool begin() {
   openedAt = millis();
   imageOpenedAt = millis();
   Serial.printf("[portal] Hotspot: %s; page: http://192.168.4.1\n",
-                NetworkTimeConfig::PORTAL_SSID);
+                portal_security::ssid());
 
   network_settings::Credentials credentials;
   hasSavedNetwork = network_settings::load(credentials);
@@ -983,6 +1001,14 @@ bool close() {
   if (display_service::isBusy() || image_transfer::isReceiving() || weather_service::isBusy()) return false;
   if (active) closePortal();
   return true;
+}
+
+void printLocalCredentials(Print& output) {
+  if (!active) {
+    output.println("[portal] Hotspot inactive. Reset the board, then send P while it is awake.");
+    return;
+  }
+  portal_security::printLocalCredentials(output);
 }
 
 }  // namespace wifi_portal

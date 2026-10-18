@@ -34,7 +34,7 @@ Job job;
 
 void searchTask(void*) {
   completed = weather_client::searchCities(job.credentials, job.query, job.province);
-  job.credentials.apiKey = "";
+  secure_memory::clear(job.credentials.apiKey);
   resultReady.store(true, std::memory_order_release);
   vTaskDelete(nullptr);
 }
@@ -63,7 +63,7 @@ bool start(const String& query, const String& province, const weather_settings::
                               nullptr, 1, nullptr, 0) != pdPASS) {
     searchState = State::Error;
     searchResult.error = weather_data::Error::TaskStart;
-    job.credentials.apiKey = "";
+    secure_memory::clear(job.credentials.apiKey);
   }
   return true;
 }

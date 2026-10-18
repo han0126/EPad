@@ -53,10 +53,6 @@ void EpdCanvas::drawPixel(int16_t x, int16_t y, uint16_t color) {
       (frame_[offset] & static_cast<uint8_t>(~mask)) | (color << shift));
 }
 
-Color4 EpdCanvas::pixel(uint16_t x, uint16_t y) const {
-  if (x >= EPD_WIDTH || y >= EPD_HEIGHT) return Color4::White;
-
-  const size_t offset = static_cast<size_t>(y) * (EPD_WIDTH / 4) + x / 4;
-  const uint8_t shift = (3 - (x & 3)) * 2;
-  return static_cast<Color4>((frame_[offset] >> shift) & 0x03);
+const uint8_t* EpdCanvas::packedData() const {
+  return frame_;
 }

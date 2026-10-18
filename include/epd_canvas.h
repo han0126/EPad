@@ -15,8 +15,8 @@ class EpdCanvas : public Adafruit_GFX {
   void clear(Color4 color = Color4::White);
   // 导入按物理坐标、高位像素在前排列的完整两位像素帧。
   bool loadPackedFrame(const uint8_t* data, size_t length);
-  // 按屏幕物理坐标取色，不受绘图旋转影响。
-  Color4 pixel(uint16_t x, uint16_t y) const;
+  // 只读物理帧，高位像素在前；发送期间不得修改画布。
+  const uint8_t* packedData() const;
 
  private:
   // 400 x 300 两位像素共占 30,000 字节。
